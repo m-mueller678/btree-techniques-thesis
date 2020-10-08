@@ -1,4 +1,3 @@
-#include <memory>
 #include <fstream>
 #include <algorithm>
 #include <atomic>
@@ -7,7 +6,6 @@
 #include <string>
 #include <csignal>
 #include <utility>
-#include <iostream>
 #include "PerfEvent.hpp"
 
 using namespace std;
@@ -556,50 +554,6 @@ struct BTree {
    }
 };
 
-// tree stats
-
-unsigned countInner(BTreeNode* node) {
-   if (node->isLeaf)
-      return 0;
-   unsigned sum = 1;
-   for (unsigned i=0; i<node->count; i++)
-      sum += countInner(node->getChild(i));
-   sum += countInner(node->upper);
-   return sum;
-}
-
-unsigned countPages(BTreeNode* node) {
-   if (node->isLeaf)
-      return 1;
-   unsigned sum = 1;
-   for (unsigned i=0; i<node->count; i++)
-      sum += countPages(node->getChild(i));
-   sum += countPages(node->upper);
-   return sum;
-}
-
-uint64_t bytesFree(BTreeNode* node) {
-   if (node->isLeaf)
-      return node->freeSpaceAfterCompaction();
-   uint64_t sum = node->freeSpaceAfterCompaction();
-   for (unsigned i=0; i<node->count; i++)
-      sum += bytesFree(node->getChild(i));
-   sum += bytesFree(node->upper);
-   return sum;
-}
-
-unsigned height(BTreeNode* node) {
-   if (node->isLeaf)
-      return 1;
-   return 1+height(node->upper);
-}
-
-void printInfos(BTreeNode* root) {
-   uint64_t cnt = countPages(root);
-   uint64_t bytesFr = bytesFree(root);
-   cerr << "nodes:" << cnt << " innerNodes:" << countInner(root) << " height:" << height(root) << " rootCnt:" << root->count << " bytesFree:" << bytesFr << " fillfactor:" << (1-(bytesFr/((double)cnt*pageSize))) << endl;
-}
-
 int main(int argc, char** argv) {
    PerfEvent e;
 
@@ -647,7 +601,6 @@ int main(int argc, char** argv) {
                throw;
          }
       }
-      printInfos(t.root);
    }
 
    return 0;
