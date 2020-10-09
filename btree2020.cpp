@@ -4,16 +4,6 @@
 
 struct BTreeNode;
 
-static unsigned min(unsigned a, unsigned b) { return a<b ? a : b; }
-
-// Compare two strings
-static int cmpKeys(uint8_t* a, uint8_t* b, unsigned aLength, unsigned bLength) {
-   int c = memcmp(a, b, min(aLength, bLength));
-   if (c)
-      return c;
-   return (aLength - bLength);
-}
-
 static const unsigned pageSize = 16*1024;
 
 struct BTreeNodeHeader {
@@ -54,6 +44,27 @@ T loadUnaligned(void* p) {
    T x;
    memcpy(&x, p, sizeof(T));
    return x;
+}
+
+static unsigned min(unsigned a, unsigned b) { return a<b ? a : b; }
+
+// Compare two strings
+static int cmpKeys(uint8_t* a, uint8_t* b, unsigned aLength, unsigned bLength) {
+   int c = memcmp(a, b, min(aLength, bLength));
+   if (c)
+      return c;
+   return (aLength - bLength);
+}
+
+// Get order-preserving head of key (assuming little endian)
+static uint32_t head(uint8_t* key, unsigned keyLength) {
+   switch (keyLength) {
+      case 0: return 0;
+      case 1: return static_cast<uint32_t>(key[0])<<24;
+      case 2: return static_cast<uint32_t>(__builtin_bswap16(loadUnaligned<uint16_t>(key)))<<16;
+      case 3: return (static_cast<uint32_t>(__builtin_bswap16(loadUnaligned<uint16_t>(key)))<<16) | (static_cast<uint32_t>(key[2])<<8);
+      default: return __builtin_bswap32(loadUnaligned<uint32_t>(key));
+   }
 }
 
 struct BTreeNode : public BTreeNodeHeader {
@@ -102,17 +113,6 @@ struct BTreeNode : public BTreeNodeHeader {
    unsigned spaceNeeded(unsigned keyLength) {
       assert(keyLength>=prefixLength);
       return sizeof(Slot) + (keyLength-prefixLength) + (isInner() ? sizeof(BTreeNode*) : 0);
-   }
-
-   // Get order-preserving head of key (assuming little endian)
-   static uint32_t head(uint8_t* key, unsigned keyLength) {
-      switch (keyLength) {
-         case 0: return 0;
-         case 1: return static_cast<uint32_t>(key[0])<<24;
-         case 2: return static_cast<uint32_t>(__builtin_bswap16(loadUnaligned<uint16_t>(key)))<<16;
-         case 3: return (static_cast<uint32_t>(__builtin_bswap16(loadUnaligned<uint16_t>(key)))<<16) | (static_cast<uint32_t>(key[2])<<8);
-         default: return __builtin_bswap32(loadUnaligned<uint32_t>(key));
-      }
    }
 
    void makeHint() {
