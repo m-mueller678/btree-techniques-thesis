@@ -57,9 +57,16 @@ struct BTreeNodeHeader {
 
    inline u8* ptr() { return reinterpret_cast<u8*>(this); }
    inline bool isInner() { return !isLeaf; }
-   inline u8* getLowerFenceKey() { return lowerFence.offset?ptr()+lowerFence.offset:nullptr; }
-   inline u8* getUpperFenceKey() { return upperFence.offset?ptr()+upperFence.offset:nullptr; }
+   inline u8* getLowerFenceKey() { return ptr()+lowerFence.offset; }
+   inline u8* getUpperFenceKey() { return ptr()+upperFence.offset; }
 };
+
+template<class T>
+T loadUnaligned(void* p) {
+   T x;
+   memcpy(&x, p, sizeof(T));
+   return x;
+}
 
 struct BTreeNode : public BTreeNodeHeader {
    struct Slot {
@@ -113,9 +120,9 @@ struct BTreeNode : public BTreeNodeHeader {
       switch (keyLength) {
          case 0: return 0;
          case 1: return static_cast<u32>(key[0])<<24;
-         case 2: return static_cast<u32>(__builtin_bswap16(*reinterpret_cast<u16*>(key)))<<16;
-         case 3: return (static_cast<u32>(__builtin_bswap16(*reinterpret_cast<u16*>(key)))<<16) | (static_cast<u32>(key[2])<<8);
-         default: return __builtin_bswap32(*reinterpret_cast<u32*>(key));
+         case 2: return static_cast<u32>(__builtin_bswap16(loadUnaligned<u16>(key)))<<16;
+         case 3: return (static_cast<u32>(__builtin_bswap16(loadUnaligned<u16>(key)))<<16) | (static_cast<u32>(key[2])<<8);
+         default: return __builtin_bswap32(loadUnaligned<u32>(key));
       }
    }
 
@@ -535,8 +542,6 @@ struct BTree {
 int main(int argc, char** argv) {
    PerfEvent e;
 
-   ifstream in(argv[1]);
-
    vector<string> data;
 
    if (getenv("INT")) {
@@ -551,6 +556,7 @@ int main(int argc, char** argv) {
          data.push_back(s);
       }
    } else {
+      ifstream in(argv[1]);
       string line;
       while (getline(in,line))
          data.push_back(line);
