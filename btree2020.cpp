@@ -452,9 +452,8 @@ static_assert(sizeof(BTreeNode)==pageSize, "page size problem");
 
 struct BTree {
    BTreeNode* root;
-   unsigned pageCount;
 
-   BTree() : root(BTreeNode::makeLeaf()), pageCount(1) {}
+   BTree() : root(BTreeNode::makeLeaf()) {}
 
    bool lookup(u8* key, unsigned keyLength) {
       BTreeNode* node = root;
@@ -471,7 +470,6 @@ struct BTree {
       if (!parent) {
          // create new root
          parent = BTreeNode::makeInner();
-         pageCount++;
          parent->upper = node;
          root = parent;
       }
@@ -480,7 +478,6 @@ struct BTree {
       if (parent->requestSpaceFor(spaceNeededParent)) { // Is there enough space in the parent for the separator?
          u8 sepKey[sepInfo.length];
          node->getSep(sepKey, sepInfo);
-         pageCount++;
          node->splitNode(parent, sepInfo.slot, sepKey, sepInfo.length);
       } else
          ensureSpace(parent, spaceNeededParent, key, keyLength); // Must split parent first to make space for separator
@@ -526,7 +523,7 @@ struct BTree {
          if (parent && (parent->count>=2) && (pos+1)<parent->count) {
             BTreeNode* right = parent->getChild(pos+1);
             if (right->freeSpaceAfterCompaction()>=BTreeNodeHeader::underFullSize) {
-               pageCount -= node->mergeNodes(pos, parent, right);
+               node->mergeNodes(pos, parent, right);
                return true; // key has been deleted already
             }
          }
