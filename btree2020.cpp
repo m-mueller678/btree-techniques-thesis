@@ -508,13 +508,15 @@ struct BTree {
       }
       if (!node->remove(key, keyLength))
          return false; // key not found
+
+      // merge if necessary
       if (node->freeSpaceAfterCompaction()>=BTreeNodeHeader::underFullSize) {
          // find neighbor and merge
          if (parent && (parent->count>=2) && (pos+1)<parent->count) {
             BTreeNode* right = parent->getChild(pos+1);
             if (right->freeSpaceAfterCompaction()>=BTreeNodeHeader::underFullSize) {
                node->mergeNodes(pos, parent, right);
-               return true; // key has been deleted already
+               return true;
             }
          }
       }
