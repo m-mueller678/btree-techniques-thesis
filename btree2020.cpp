@@ -16,7 +16,6 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 
 struct BTreeNode;
-typedef BTreeNode* ValueType;
 
 // Compare two strings
 static int cmpKeys(u8* a, u8* b, unsigned aLength, unsigned bLength) {
@@ -113,7 +112,7 @@ struct BTreeNode : public BTreeNodeHeader {
    // How much space would inserting a new key of length "keyLength" require?
    unsigned spaceNeeded(unsigned keyLength) {
       assert(keyLength>=prefixLength);
-      return sizeof(Slot) + (keyLength-prefixLength) + (isInner() ? sizeof(ValueType) : 0);
+      return sizeof(Slot) + (keyLength-prefixLength) + (isInner() ? sizeof(BTreeNode*) : 0);
    }
 
    // Get order-preserving head of key (assuming little endian)
@@ -213,7 +212,7 @@ struct BTreeNode : public BTreeNodeHeader {
       return lower;
    }
 
-   bool insert(u8* key, unsigned keyLength, ValueType value) {
+   bool insert(u8* key, unsigned keyLength, BTreeNode* value=nullptr) {
       if (!requestSpaceFor(spaceNeeded(keyLength)))
          return false; // no space, insert fails
       unsigned slotId = lowerBound<false>(key, keyLength);
@@ -226,7 +225,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    bool removeSlot(unsigned slotId) {
       spaceUsed -= getKeyLen(slotId);
-      spaceUsed -= isInner() ? sizeof(ValueType) : 0;
+      spaceUsed -= isInner() ? sizeof(BTreeNode*) : 0;
       memmove(slot+slotId, slot+slotId+1, sizeof(Slot)*(count-slotId-1));
       count--;
       makeHint();
@@ -294,21 +293,21 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    // store key/value pair at slotId
-   void storeKeyValue(u16 slotId, u8* key, unsigned keyLength, ValueType value) {
-      // Head
+   void storeKeyValue(u16 slotId, u8* key, unsigned keyLength, BTreeNode* child) {
+      // slot
       key += prefixLength;
       keyLength -= prefixLength;
       slot[slotId].head = head(key, keyLength);
       slot[slotId].len = keyLength;
-      // Value
-      unsigned space = keyLength + (isInner()?sizeof(ValueType):0);
+      // key
+      unsigned space = keyLength + (isInner()?sizeof(BTreeNode*):0);
       dataOffset -= space;
       spaceUsed += space;
       slot[slotId].offset = dataOffset;
       assert(getKey(slotId)>=reinterpret_cast<u8*>(&slot[slotId]));
       memcpy(getKey(slotId), key, keyLength);
       if (isInner())
-         setChild(slotId, value);
+         setChild(slotId, child);
    }
 
    void copyKeyValueRange(BTreeNode* dst, u16 dstSlot, u16 srcSlot, unsigned count) {
@@ -316,7 +315,7 @@ struct BTreeNode : public BTreeNodeHeader {
          unsigned diff = dst->prefixLength-prefixLength;
          for (unsigned i=0; i<count; i++) {
             unsigned keyLength = getKeyLen(srcSlot+i) - diff;
-            unsigned space = keyLength + (isInner()?sizeof(ValueType):0);
+            unsigned space = keyLength + (isInner()?sizeof(BTreeNode*):0);
             dst->dataOffset -= space;
             dst->spaceUsed += space;
             dst->slot[dstSlot+i].offset = dst->dataOffset;
@@ -359,7 +358,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    void splitNode(BTreeNode* parent, unsigned sepSlot, u8* sepKey, unsigned sepLength) {
       assert(sepSlot>0);
-      assert(sepSlot<(pageSize/sizeof(ValueType)));
+      assert(sepSlot<(pageSize/sizeof(BTreeNode*)));
       BTreeNode* nodeLeft = new BTreeNode(isLeaf);
       nodeLeft->setFences(getLowerFenceKey(), lowerFence.length, sepKey, sepLength);
       BTreeNode tmp(isLeaf);
@@ -494,18 +493,19 @@ struct BTree {
       splitNode(toSplit, parent, key, keyLength);
    }
 
-   void insert(u8* key, unsigned keyLength, ValueType value) {
+   void insert(u8* key, unsigned keyLength) {
       BTreeNode* node = root;
       BTreeNode* parent = nullptr;
       while (node->isInner()) {
          parent = node;
          node = node->lookupInner(key, keyLength);
       }
-      if (node->insert(key, keyLength, value))
+      if (node->insert(key, keyLength))
          return;
-      // no more space, need to split
+
+      // node is full: split and restart
       splitNode(node, parent, key, keyLength);
-      insert(key, keyLength, value);
+      insert(key, keyLength);
    }
 
    bool remove(u8* key, unsigned keyLength) {
@@ -571,7 +571,7 @@ int main(int argc, char** argv) {
          e.setParam("op", "insert");
          PerfEventBlock b(e, count);
          for (uint64_t i=0; i<count; i++) {
-            t.insert((u8*)data[i].data(), data[i].size(), reinterpret_cast<ValueType>(i));
+            t.insert((u8*)data[i].data(), data[i].size());
          }
       }
 
