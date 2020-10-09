@@ -101,7 +101,8 @@ struct BTreeNode : public BTreeNodeHeader {
    inline u8* getKey(unsigned slotId) { return ptr()+slot[slotId].offset; }
    inline unsigned getKeyLen(unsigned slotId) { return slot[slotId].len; }
    inline unsigned getFullKeyLength(unsigned slotId) { return prefixLength + slot[slotId].len; }
-   inline ValueType& getChild(unsigned slotId) { assert(isInner()); return *reinterpret_cast<ValueType*>(ptr()+slot[slotId].offset+slot[slotId].len); }
+   inline void setChild(unsigned slotId, BTreeNode* child) { assert(isInner()); memcpy(ptr()+slot[slotId].offset+slot[slotId].len, &child, sizeof(BTreeNode*)); }
+   inline BTreeNode* getChild(unsigned slotId) { assert(isInner()); return loadUnaligned<BTreeNode*>(ptr()+slot[slotId].offset+slot[slotId].len); }
 
    // Copy key at "slotId" to "out" array
    inline void copyFullKey(unsigned slotId, u8* out) {
@@ -307,7 +308,7 @@ struct BTreeNode : public BTreeNodeHeader {
       assert(getKey(slotId)>=reinterpret_cast<u8*>(&slot[slotId]));
       memcpy(getKey(slotId), key, keyLength);
       if (isInner())
-         getChild(slotId) = value;
+         setChild(slotId, value);
    }
 
    void copyKeyValueRange(BTreeNode* dst, u16 dstSlot, u16 srcSlot, unsigned count) {
