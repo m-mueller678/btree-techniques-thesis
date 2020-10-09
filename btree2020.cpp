@@ -213,7 +213,6 @@ struct BTreeNode : public BTreeNodeHeader {
       storeKeyValue(slotId, key, keyLength, value);
       count++;
       updateHint(slotId);
-      //assert(lowerBound<true>(key, keyLength)==static_cast<int>(slotId));
       return true;
    }
 
@@ -393,14 +392,11 @@ struct BTreeNode : public BTreeNodeHeader {
       return i;
    }
 
-   SeparatorInfo findSep(bool sortedInsert) {
-      if (sortedInsert && isInner())
-         return SeparatorInfo{getFullKeyLength(count-1), static_cast<unsigned>(count-1), false};
-
+   SeparatorInfo findSep() {
       if (isInner())
          return SeparatorInfo{getFullKeyLength(count/2), static_cast<unsigned>(count/2), false};
 
-      unsigned lower = count/2 - count/16;
+      unsigned lower = count/2 - count/16; // XXX
       unsigned upper = count/2 + count/16;
       assert(upper<count);
       unsigned maxPos = count/2;
@@ -464,7 +460,7 @@ struct BTree {
       return false;
    }
 
-   void splitNode(BTreeNode* node, BTreeNode* parent, u8* key, unsigned keyLength, bool sortedInsert=false) {
+   void splitNode(BTreeNode* node, BTreeNode* parent, u8* key, unsigned keyLength) {
       if (!parent) {
          // create new root
          parent = BTreeNode::makeInner();
@@ -472,7 +468,7 @@ struct BTree {
          parent->upper = node;
          root = parent;
       }
-      BTreeNode::SeparatorInfo sepInfo = node->findSep(sortedInsert);
+      BTreeNode::SeparatorInfo sepInfo = node->findSep();
       unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length);
       if (parent->requestSpaceFor(spaceNeededParent)) { // Is there enough space in the parent for the separator?
          u8 sepKey[sepInfo.length];
@@ -505,24 +501,6 @@ struct BTree {
       // no more space, need to split
       splitNode(node, parent, key, keyLength);
       insert(key, keyLength, value);
-   }
-
-   void insertLeafSorted(u8* key, unsigned keyLength, BTreeNode* leaf) {
-      BTreeNode* node = root;
-      BTreeNode* parent = nullptr;
-      BTreeNode* parentParent = nullptr;
-      while (node->isInner()) {
-         parentParent = parent;
-         parent = node;
-         node = node->lookupInner(key, keyLength);
-      }
-      if (parent->insert(key, keyLength, leaf)) {
-         pageCount++;
-         return;
-      }
-      // no more space, need to split
-      splitNode(parent, parentParent, key, keyLength, true);
-      insertLeafSorted(key, keyLength, leaf);
    }
 
    bool remove(u8* key, unsigned keyLength) {
