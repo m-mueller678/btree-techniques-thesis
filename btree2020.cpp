@@ -32,11 +32,6 @@ struct BTreeNodeHeader {
 
    BTreeNodeHeader(bool isLeaf) : isLeaf(isLeaf) {}
    ~BTreeNodeHeader() {}
-
-   inline uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
-   inline bool isInner() { return !isLeaf; }
-   inline uint8_t* getLowerFenceKey() { return ptr()+lowerFence.offset; }
-   inline uint8_t* getUpperFenceKey() { return ptr()+upperFence.offset; }
 };
 
 template<class T>
@@ -79,6 +74,11 @@ struct BTreeNode : public BTreeNodeHeader {
    Slot slot[(pageSize-sizeof(BTreeNodeHeader))/(sizeof(Slot))];
 
    BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
+
+   inline uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
+   inline bool isInner() { return !isLeaf; }
+   inline uint8_t* getLowerFenceKey() { return ptr()+lowerFence.offset; }
+   inline uint8_t* getUpperFenceKey() { return ptr()+upperFence.offset; }
 
    unsigned freeSpace() { return dataOffset-(reinterpret_cast<uint8_t*>(slot+count)-ptr()); }
    unsigned freeSpaceAfterCompaction() { return pageSize-(reinterpret_cast<uint8_t*>(slot+count)-ptr())-spaceUsed; }
@@ -130,13 +130,20 @@ struct BTreeNode : public BTreeNodeHeader {
          hint[i] = slot[dist*(i+1)].head;
    }
 
-   void searchHint(uint32_t keyHead, unsigned& pos, unsigned& pos2) {
-      for (pos=0; pos<hintCount; pos++)
-         if (hint[pos]>=keyHead)
-            break;
-      for (pos2=pos; pos2<hintCount; pos2++)
-         if (hint[pos2]!=keyHead)
-            break;
+   void searchHint(uint32_t keyHead, unsigned& lower, unsigned& upper) {
+      if (count > hintCount*2) {
+         unsigned dist = upper/(hintCount+1);
+         unsigned pos, pos2;
+         for (pos=0; pos<hintCount; pos++)
+            if (hint[pos]>=keyHead)
+               break;
+         for (pos2=pos; pos2<hintCount; pos2++)
+            if (hint[pos2]!=keyHead)
+               break;
+         lower = pos * dist;
+         if (pos2<hintCount)
+            upper = (pos2+1) * dist;
+      }
    }
 
    // lower bound search, returns slotId (if equalityOnly=true -1 is returned on no match)
@@ -159,14 +166,7 @@ struct BTreeNode : public BTreeNodeHeader {
       unsigned upper = count;
       uint32_t keyHead = head(key, keyLength);
 
-      if (count > hintCount*2) {
-         unsigned dist = count/(hintCount+1);
-         unsigned pos, pos2;
-         searchHint(keyHead, pos, pos2);
-         lower = pos * dist;
-         if (pos2<hintCount)
-            upper = (pos2+1) * dist;
-      }
+      searchHint(keyHead, lower, upper);
 
       while (lower<upper) {
          unsigned mid = ((upper-lower)/2)+lower;
@@ -560,7 +560,7 @@ int main(int argc, char** argv) {
 
    uint64_t count = data.size();
 
-      {
+   {
       BTree t;
       e.setParam("type", "btr");
       e.setParam("factr", "0");
