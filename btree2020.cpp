@@ -164,10 +164,9 @@ struct BTreeNode : public BTreeNodeHeader {
 
       unsigned lower = 0;
       unsigned upper = count;
-      uint32_t keyHead = head(key, keyLength);
-
       searchHint(keyHead, lower, upper);
 
+      uint32_t keyHead = head(key, keyLength);
       while (lower<upper) {
          unsigned mid = ((upper-lower)/2)+lower;
          if (keyHead < slot[mid].head) {
