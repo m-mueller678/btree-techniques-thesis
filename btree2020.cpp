@@ -4,10 +4,11 @@
 
 struct BTreeNode;
 
-static const unsigned pageSize = 4*1024; // 65536 is maximum
+// maximum page size (in bytes) is 65536
+static const unsigned pageSize = 2000;
 
 struct BTreeNodeHeader {
-   static const unsigned underFullSize = pageSize-pageSize/8; // merge nodes below this size
+   static const unsigned underFullSize = pageSize - (pageSize/8); // merge nodes below this size
 
    struct FenceKeySlot {
       uint16_t offset;
@@ -70,7 +71,7 @@ struct BTreeNode : public BTreeNodeHeader {
          uint8_t headBytes[4];
       };
    };
-   Slot slot[(pageSize-sizeof(BTreeNodeHeader))/(sizeof(Slot))];
+   Slot slot[(pageSize-sizeof(BTreeNodeHeader)) / sizeof(Slot)];
 
    static constexpr unsigned maxKeySize = ((pageSize-sizeof(BTreeNodeHeader)-(2*sizeof(Slot))))/4;
 
@@ -328,7 +329,7 @@ struct BTreeNode : public BTreeNodeHeader {
       dst->storeKeyValue(dstSlot, key, fullLength, (isInner()?getChild(srcSlot):nullptr));
    }
 
-   void insertFence(FenceKey& fk, uint8_t* key, unsigned keyLength) {
+   void insertFence(FenceKeySlot& fk, uint8_t* key, unsigned keyLength) {
       if (!key)
          return;
       assert(freeSpace()>=keyLength);
@@ -446,7 +447,7 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 };
 
-static_assert(sizeof(BTreeNode)==pageSize, "page size problem");
+static_assert(sizeof(BTreeNode)<=pageSize, "page size problem");
 
 struct BTree {
    BTreeNode* root;
@@ -492,6 +493,7 @@ struct BTree {
    }
 
    void insert(uint8_t* key, unsigned keyLength) {
+      assert(keyLength<=BTreeNode::maxKeySize);
       BTreeNode* node = root;
       BTreeNode* parent = nullptr;
       while (node->isInner()) {
