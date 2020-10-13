@@ -9,16 +9,15 @@ static const unsigned pageSize = 4*1024; // 65536 is maximum
 struct BTreeNodeHeader {
    static const unsigned underFullSize = pageSize-pageSize/8; // merge nodes below this size
 
-   struct FenceKey {
+   struct FenceKeySlot {
       uint16_t offset;
       uint16_t length;
    };
 
    BTreeNode* upper = nullptr; // only used in inner nodes
 
-   // slots for lower and upper fence keys
-   FenceKey lowerFence = {0,0}; // exclusive
-   FenceKey upperFence = {0,0}; // inclusive
+   FenceKeySlot lowerFence = {0,0}; // exclusive
+   FenceKeySlot upperFence = {0,0}; // inclusive
 
    uint16_t count = 0;
    bool isLeaf;
