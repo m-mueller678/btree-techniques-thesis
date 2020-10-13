@@ -5,7 +5,7 @@
 struct BTreeNode;
 
 // maximum page size (in bytes) is 65536
-static const unsigned pageSize = 1024;
+static const unsigned pageSize = 4*1024;
 
 struct BTreeNodeHeader {
    static const unsigned underFullSize = pageSize - (pageSize/8); // merge nodes below this size
@@ -587,6 +587,36 @@ void printInfos(BTreeNode* root) {
    cerr << "nodes:" << cnt << " innerNodes:" << countInner(root) << " height:" << height(root) << " rootCnt:" << root->count << " bytesFree:" << bytesFr << " fillfactor:" << (1-(bytesFr/((double)cnt*pageSize))) << endl;
 }
 
+void runTest(PerfEvent& e, vector<string>& data) {
+   if (getenv("SHUF"))
+      random_shuffle(data.begin(), data.end());
+
+   BTree t;
+   uint64_t count = data.size();
+   e.setParam("type", "btr");
+   e.setParam("factr", "0");
+   e.setParam("base", "0");
+   {
+      e.setParam("op", "insert");
+      PerfEventBlock b(e, count);
+      for (uint64_t i=0; i<count; i++) {
+         t.insert((uint8_t*)data[i].data(), data[i].size());
+
+         //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
+      }
+   }
+
+   {
+      e.setParam("op", "lookup");
+      PerfEventBlock b(e, count);
+      for (uint64_t i=0; i<count; i++)
+         if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
+            throw;
+   }
+   printInfos(t.root);
+   data.clear();
+}
+
 int main(int argc, char** argv) {
    PerfEvent e;
 
@@ -597,13 +627,15 @@ int main(int argc, char** argv) {
       uint64_t n = atof(getenv("INT"));
       for (uint64_t i=0; i<n; i++)
          v.push_back(i);
-      random_shuffle(v.begin(), v.end());
       string s; s.resize(4);
       for (auto x : v) {
          *(uint32_t*)(s.data()) = x;
          data.push_back(s);
       }
-   } else if (getenv("LONG1")) {
+      runTest(e, data);
+   }
+
+   if (getenv("LONG1")) {
       uint64_t n = atof(getenv("LONG1"));
       for (unsigned i=0; i<n; i++) {
          string s;
@@ -611,8 +643,10 @@ int main(int argc, char** argv) {
             s.push_back('A');
          data.push_back(s);
       }
-      random_shuffle(data.begin(), data.end());
-   } else if (getenv("LONG2")) {
+      runTest(e, data);
+   }
+
+   if (getenv("LONG2")) {
       uint64_t n = atof(getenv("LONG2"));
       for (unsigned i=0; i<n; i++) {
          string s;
@@ -620,39 +654,15 @@ int main(int argc, char** argv) {
             s.push_back('A' + random()%60);
          data.push_back(s);
       }
-      random_shuffle(data.begin(), data.end());
-   } else {
-      ifstream in(argv[1]);
+      runTest(e, data);
+   }
+
+   if (getenv("FILE")) {
+      ifstream in(getenv("FILE"));
       string line;
       while (getline(in,line))
          data.push_back(line);
-   }
-
-   uint64_t count = data.size();
-
-   {
-      BTree t;
-      e.setParam("type", "btr");
-      e.setParam("factr", "0");
-      e.setParam("base", "0");
-      {
-         e.setParam("op", "insert");
-         PerfEventBlock b(e, count);
-         for (uint64_t i=0; i<count; i++) {
-            t.insert((uint8_t*)data[i].data(), data[i].size());
-
-            //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
-         }
-      }
-
-      {
-         e.setParam("op", "lookup");
-         PerfEventBlock b(e, count);
-         for (uint64_t i=0; i<count; i++)
-            if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
-               throw;
-      }
-      printInfos(t.root);
+      runTest(e, data);
    }
 
 
