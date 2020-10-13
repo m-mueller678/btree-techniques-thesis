@@ -1,0 +1,9 @@
+-assumes little endian (head)
+-prefix remove?
+-pageSize can be dynamic
+-lowerBound uglyniess
+-test.cpp with payloads
+-add comments
+-check merge
+-check asserts
+-assert(keyLength>=4); => test short misses
