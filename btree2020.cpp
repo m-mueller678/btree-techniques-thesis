@@ -390,8 +390,11 @@ struct BTreeNode : public BTreeNodeHeader {
 
    SeparatorInfo findSep() {
       assert(count>1);
-      if (isInner()) // inner nodes split in the middle
-         return SeparatorInfo{getFullKeyLength(count/2), static_cast<unsigned>(count/2), false};
+      if (isInner()) {
+         // we split inner nodes in the middle
+         unsigned slot = count/2;
+         return SeparatorInfo{getFullKeyLength(slot), slot, false};
+      }
 
       unsigned lower, upper;
       if (count<4) {
