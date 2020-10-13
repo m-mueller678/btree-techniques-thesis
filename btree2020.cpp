@@ -614,6 +614,19 @@ void runTest(PerfEvent& e, vector<string>& data) {
             throw;
    }
    printInfos(t.root);
+
+   {
+      for (uint64_t i=0; i<count; i+=4)
+         if (!t.remove((uint8_t*)data[i].data(), data[i].size()))
+            throw;
+      for (uint64_t i=0; i<count; i++)
+         if ((i%4==0) == t.lookup((uint8_t*)data[i].data(), data[i].size()) )
+            throw;
+      for (uint64_t i=0; i<count; i++)
+         if ((i%4==0) == t.remove((uint8_t*)data[i].data(), data[i].size()) )
+            throw;
+   }
+
    data.clear();
 }
 
