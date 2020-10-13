@@ -372,9 +372,9 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    struct SeparatorInfo {
-      unsigned length;
-      unsigned slot;
-      bool isTruncated;
+      unsigned length; // length of new separator
+      unsigned slot; // slot at which we split
+      bool isTruncated; // if true, we truncate the separator taking length bytes from slot+1
    };
 
    unsigned commonPrefix(unsigned slotA, unsigned slotB) {
