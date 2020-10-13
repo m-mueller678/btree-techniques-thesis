@@ -522,7 +522,7 @@ struct BTree {
       // merge if necessary
       if (node->freeSpaceAfterCompaction()>=BTreeNodeHeader::underFullSize) {
          // find neighbor and merge
-         if (parent && (parent->count>=2) && (pos+1)<parent->count) {
+         if (parent && (parent->count>=2) && (pos+1)<parent->count) { // XXX
             BTreeNode* right = parent->getChild(pos+1);
             if (right->freeSpaceAfterCompaction()>=BTreeNodeHeader::underFullSize) {
                node->mergeNodes(pos, parent, right);
@@ -622,10 +622,15 @@ void runTest(PerfEvent& e, vector<string>& data) {
       for (uint64_t i=0; i<count; i++)
          if ((i%4==0) == t.lookup((uint8_t*)data[i].data(), data[i].size()) )
             throw;
-      for (uint64_t i=0; i<count; i++)
+      for (uint64_t i=0; i<count/2+count/4; i++)
          if ((i%4==0) == t.remove((uint8_t*)data[i].data(), data[i].size()) )
             throw;
+      for (uint64_t i=0; i<count/2+count/4; i++)
+         t.insert((uint8_t*)data[i].data(), data[i].size());
+      for (uint64_t i=0; i<count; i++)
+         t.remove((uint8_t*)data[i].data(), data[i].size());
    }
+   printInfos(t.root);
 
    data.clear();
 }
