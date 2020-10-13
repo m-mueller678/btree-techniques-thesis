@@ -4,7 +4,7 @@
 
 struct BTreeNode;
 
-static const unsigned pageSize = 16*1024;
+static const unsigned pageSize = 4*1024; // 65536 is maximum
 
 struct BTreeNodeHeader {
    static const unsigned underFullSize = pageSize-pageSize/8; // merge nodes below this size
@@ -73,7 +73,7 @@ struct BTreeNode : public BTreeNodeHeader {
    };
    Slot slot[(pageSize-sizeof(BTreeNodeHeader))/(sizeof(Slot))];
 
-   static constexpr unsigned maxKeySize = ((pageSize-sizeof(BTreeNodeHeader))-2*sizeof(Slot))/4;
+   static constexpr unsigned maxKeySize = ((pageSize-sizeof(BTreeNodeHeader)-(2*sizeof(Slot))))/4;
 
    BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
 
@@ -300,10 +300,10 @@ struct BTreeNode : public BTreeNodeHeader {
          setChild(slotId, child);
    }
 
-   void copyKeyValueRange(BTreeNode* dst, uint16_t dstSlot, uint16_t srcSlot, unsigned count) {
+   void copyKeyValueRange(BTreeNode* dst, uint16_t dstSlot, uint16_t srcSlot, unsigned srcCount) {
       if (prefixLength<=dst->prefixLength) { // prefix grows
          unsigned diff = dst->prefixLength-prefixLength;
-         for (unsigned i=0; i<count; i++) {
+         for (unsigned i=0; i<srcCount; i++) {
             unsigned keyLength = getKeyLen(srcSlot+i) - diff;
             unsigned space = keyLength + (isInner()?sizeof(BTreeNode*):0);
             dst->dataOffset -= space;
@@ -315,10 +315,10 @@ struct BTreeNode : public BTreeNodeHeader {
             dst->slot[dstSlot+i].len = keyLength;
          }
       } else {
-         for (unsigned i=0; i<count; i++)
+         for (unsigned i=0; i<srcCount; i++)
             copyKeyValue(srcSlot+i, dst, dstSlot+i);
       }
-      dst->count += count;
+      dst->count += srcCount;
       assert((dst->ptr()+dst->dataOffset)>=reinterpret_cast<uint8_t*>(dst->slot+dst->count));
    }
 
@@ -641,9 +641,7 @@ int main(int argc, char** argv) {
          for (uint64_t i=0; i<count; i++) {
             t.insert((uint8_t*)data[i].data(), data[i].size());
 
-            for (uint64_t j=0; j<=i; j++)
-               if (!t.lookup((uint8_t*)data[j].data(), data[j].size()))
-                  throw;
+            //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
          }
       }
 
