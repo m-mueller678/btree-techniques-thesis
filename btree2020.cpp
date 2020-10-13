@@ -330,8 +330,6 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    void insertFence(FenceKeySlot& fk, uint8_t* key, unsigned keyLength) {
-      if (!key)
-         return;
       assert(freeSpace()>=keyLength);
       dataOffset -= keyLength;
       spaceUsed += keyLength;
