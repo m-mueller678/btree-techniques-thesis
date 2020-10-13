@@ -422,10 +422,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    void getSep(uint8_t* sepKeyOut, SeparatorInfo info) {
       memcpy(sepKeyOut, getLowerFenceKey(), prefixLength);
-      if (info.isTruncated)
-         memcpy(sepKeyOut+prefixLength, getKey(info.slot+1), info.length-prefixLength);
-      else
-         memcpy(sepKeyOut+prefixLength, getKey(info.slot), info.length-prefixLength);
+      memcpy(sepKeyOut+prefixLength, getKey(info.slot+info.isTruncated), info.length-prefixLength);
    }
 
    BTreeNode* lookupInner(uint8_t* key, unsigned keyLength) {
