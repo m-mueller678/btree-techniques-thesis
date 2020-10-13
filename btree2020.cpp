@@ -5,7 +5,7 @@
 struct BTreeNode;
 
 // maximum page size (in bytes) is 65536
-static const unsigned pageSize = 2000;
+static const unsigned pageSize = 1024;
 
 struct BTreeNodeHeader {
    static const unsigned underFullSize = pageSize - (pageSize/8); // merge nodes below this size
@@ -71,7 +71,10 @@ struct BTreeNode : public BTreeNodeHeader {
          uint8_t headBytes[4];
       };
    };
-   Slot slot[(pageSize-sizeof(BTreeNodeHeader)) / sizeof(Slot)];
+   union {
+      Slot slot[(pageSize-sizeof(BTreeNodeHeader)) / sizeof(Slot)]; // grows from front
+      uint8_t heap[pageSize-sizeof(BTreeNodeHeader)]; // grows from back
+   };
 
    static constexpr unsigned maxKeySize = ((pageSize-sizeof(BTreeNodeHeader)-(2*sizeof(Slot))))/4;
 
@@ -444,8 +447,6 @@ struct BTreeNode : public BTreeNodeHeader {
       return;
    }
 };
-
-static_assert(sizeof(BTreeNode)<=pageSize, "page size problem");
 
 struct BTree {
    BTreeNode* root;
