@@ -415,9 +415,10 @@ struct BTreeNode : public BTreeNodeHeader {
             bestSlot = i;
          }
       }
+
       // truncate separator
       unsigned common = commonPrefix(bestSlot, bestSlot+1);
-      if ((slot[bestSlot].len > common) && (slot[bestSlot+1].len > common+1)) {
+      if ((bestSlot+1<count) && (slot[bestSlot].len > common) && (slot[bestSlot+1].len > common+1)) {
          return SeparatorInfo{prefixLength+common+1, bestSlot, true};
       }
       return SeparatorInfo{getFullKeyLength(bestSlot), bestSlot, false};
