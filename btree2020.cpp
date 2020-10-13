@@ -7,7 +7,7 @@ struct BTreeNode;
 static const unsigned pageSize = 16*1024;
 
 struct BTreeNodeHeader {
-   static const unsigned underFullSize = pageSize*0.4; // merging threshold
+   static const unsigned underFullSize = pageSize-pageSize/8; // merge nodes below this size
 
    struct FenceKey {
       uint16_t offset;
@@ -72,6 +72,8 @@ struct BTreeNode : public BTreeNodeHeader {
       };
    };
    Slot slot[(pageSize-sizeof(BTreeNodeHeader))/(sizeof(Slot))];
+
+   static constexpr unsigned maxKeySize = ((pageSize-sizeof(BTreeNodeHeader))-2*sizeof(Slot))/4;
 
    BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
 
@@ -164,9 +166,9 @@ struct BTreeNode : public BTreeNodeHeader {
 
       unsigned lower = 0;
       unsigned upper = count;
+      uint32_t keyHead = head(key, keyLength);
       searchHint(keyHead, lower, upper);
 
-      uint32_t keyHead = head(key, keyLength);
       while (lower<upper) {
          unsigned mid = ((upper-lower)/2)+lower;
          if (keyHead < slot[mid].head) {
@@ -372,12 +374,11 @@ struct BTreeNode : public BTreeNodeHeader {
    struct SeparatorInfo {
       unsigned length;
       unsigned slot;
-      bool trunc;
+      bool isTruncated;
    };
 
    unsigned commonPrefix(unsigned slotA, unsigned slotB) {
       assert(slotA<count);
-      assert(slotB<count);
       unsigned limit = min(slot[slotA].len, slot[slotB].len);
       uint8_t* a = getKey(slotA), *b = getKey(slotB);
       unsigned i;
@@ -388,31 +389,40 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    SeparatorInfo findSep() {
-      if (isInner())
+      assert(count>1);
+      if (isInner()) // inner nodes split in the middle
          return SeparatorInfo{getFullKeyLength(count/2), static_cast<unsigned>(count/2), false};
 
-      unsigned lower = count/2 - count/16; // XXX
-      unsigned upper = count/2 + count/16;
-      assert(upper<count);
-      unsigned maxPos = count/2;
-      int maxPrefix = commonPrefix(maxPos, 0);
+      unsigned lower, upper;
+      if (count<4) {
+         lower = count/2;
+         upper = lower+1;
+      } else {
+         lower = count/2 - count/16;
+         upper = count/2 + count/16;
+      }
+
+      // find best separator
+      unsigned bestSlot = count/2;
+      unsigned bestPrefixLength = commonPrefix(bestSlot, 0);
       for (unsigned i=lower; i<upper; i++) {
-         int prefix = commonPrefix(i, 0);
-         if (prefix>maxPrefix) {
-            maxPrefix = prefix;
-            maxPos = i;
+         unsigned prefix = commonPrefix(i, 0);
+         if (prefix>bestPrefixLength) {
+            bestPrefixLength = prefix;
+            bestSlot = i;
          }
       }
-      unsigned common = commonPrefix(maxPos, maxPos+1);
-      if ((slot[maxPos].len > common) && (slot[maxPos+1].len > common+1)) {
-         return SeparatorInfo{static_cast<unsigned>(prefixLength+common+1), maxPos, true};
+      // truncate separator
+      unsigned common = commonPrefix(bestSlot, bestSlot+1);
+      if ((slot[bestSlot].len > common) && (slot[bestSlot+1].len > common+1)) {
+         return SeparatorInfo{static_cast<unsigned>(prefixLength+common+1), bestSlot, true};
       }
-      return SeparatorInfo{getFullKeyLength(maxPos), maxPos, false};
+      return SeparatorInfo{getFullKeyLength(bestSlot), bestSlot, false};
    }
 
    void getSep(uint8_t* sepKeyOut, SeparatorInfo info) {
       memcpy(sepKeyOut, getLowerFenceKey(), prefixLength);
-      if (info.trunc)
+      if (info.isTruncated)
          memcpy(sepKeyOut+prefixLength, getKey(info.slot+1), info.length-prefixLength);
       else
          memcpy(sepKeyOut+prefixLength, getKey(info.slot), info.length-prefixLength);
@@ -534,6 +544,48 @@ using namespace std;
 #include <string>
 #include "PerfEvent.hpp"
 
+unsigned countInner(BTreeNode* node) {
+   if (node->isLeaf)
+      return 0;
+   unsigned sum = 1;
+   for (unsigned i=0; i<node->count; i++)
+      sum += countInner(node->getChild(i));
+   sum += countInner(node->upper);
+   return sum;
+}
+
+unsigned countPages(BTreeNode* node) {
+   if (node->isLeaf)
+      return 1;
+   unsigned sum = 1;
+   for (unsigned i=0; i<node->count; i++)
+      sum += countPages(node->getChild(i));
+   sum += countPages(node->upper);
+   return sum;
+}
+
+uint64_t bytesFree(BTreeNode* node) {
+   if (node->isLeaf)
+      return node->freeSpaceAfterCompaction();
+   uint64_t sum = node->freeSpaceAfterCompaction();
+   for (unsigned i=0; i<node->count; i++)
+      sum += bytesFree(node->getChild(i));
+   sum += bytesFree(node->upper);
+   return sum;
+}
+
+unsigned height(BTreeNode* node) {
+   if (node->isLeaf)
+      return 1;
+   return 1+height(node->upper);
+}
+
+void printInfos(BTreeNode* root) {
+   uint64_t cnt = countPages(root);
+   uint64_t bytesFr = bytesFree(root);
+   cerr << "nodes:" << cnt << " innerNodes:" << countInner(root) << " height:" << height(root) << " rootCnt:" << root->count << " bytesFree:" << bytesFr << " fillfactor:" << (1-(bytesFr/((double)cnt*pageSize))) << endl;
+}
+
 int main(int argc, char** argv) {
    PerfEvent e;
 
@@ -550,6 +602,24 @@ int main(int argc, char** argv) {
          *(uint32_t*)(s.data()) = x;
          data.push_back(s);
       }
+   } else if (getenv("LONG1")) {
+      uint64_t n = atof(getenv("LONG1"));
+      for (unsigned i=0; i<n; i++) {
+         string s;
+         for (unsigned j=0; j<i; j++)
+            s.push_back('A');
+         data.push_back(s);
+      }
+      random_shuffle(data.begin(), data.end());
+   } else if (getenv("LONG2")) {
+      uint64_t n = atof(getenv("LONG2"));
+      for (unsigned i=0; i<n; i++) {
+         string s;
+         for (unsigned j=0; j<i; j++)
+            s.push_back('A' + random()%60);
+         data.push_back(s);
+      }
+      random_shuffle(data.begin(), data.end());
    } else {
       ifstream in(argv[1]);
       string line;
@@ -569,18 +639,23 @@ int main(int argc, char** argv) {
          PerfEventBlock b(e, count);
          for (uint64_t i=0; i<count; i++) {
             t.insert((uint8_t*)data[i].data(), data[i].size());
+
+            for (uint64_t j=0; j<=i; j++)
+               if (!t.lookup((uint8_t*)data[j].data(), data[j].size()))
+                  throw;
          }
       }
 
       {
          e.setParam("op", "lookup");
          PerfEventBlock b(e, count);
-         for (uint64_t i=0; i<count; i++) {
+         for (uint64_t i=0; i<count; i++)
             if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
                throw;
-         }
       }
+      printInfos(t.root);
    }
+
 
    return 0;
 }
