@@ -694,18 +694,18 @@ void runTest(PerfEvent& e, vector<string>& data)
       t.lookup((uint8_t*)data[i].data(), data[i].size() - (data[i].size() / 4));
 
    {
-      for (uint64_t i = 0; i < count; i += 4)
+      for (uint64_t i = 0; i < count; i += 4) // remove some
          if (!t.remove((uint8_t*)data[i].data(), data[i].size()))
             throw;
-      for (uint64_t i = 0; i < count; i++)
+      for (uint64_t i = 0; i < count; i++) // lookup all, causes some misses
          if ((i % 4 == 0) == t.lookup((uint8_t*)data[i].data(), data[i].size()))
             throw;
-      for (uint64_t i = 0; i < count / 2 + count / 4; i++)
+      for (uint64_t i = 0; i < count / 2 + count / 4; i++) // remove some more
          if ((i % 4 == 0) == t.remove((uint8_t*)data[i].data(), data[i].size()))
             throw;
-      for (uint64_t i = 0; i < count / 2 + count / 4; i++)
+      for (uint64_t i = 0; i < count / 2 + count / 4; i++) // insert all
          t.insert((uint8_t*)data[i].data(), data[i].size());
-      for (uint64_t i = 0; i < count; i++)
+      for (uint64_t i = 0; i < count; i++) // remove all
          t.remove((uint8_t*)data[i].data(), data[i].size());
    }
    printInfos(t.root);
