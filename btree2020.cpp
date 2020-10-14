@@ -1,6 +1,3 @@
-#include <csignal>
-
-
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -452,7 +449,7 @@ struct BTreeNode : public BTreeNodeHeader {
       }
 
       // find best separator
-      unsigned bestSlot = count / 2;
+      unsigned bestSlot = count / 2; // XXX
       unsigned bestPrefixLength = commonPrefix(bestSlot, 0);
       for (unsigned i = lower; i < upper; i++) {
          unsigned prefix = commonPrefix(i, 0);
@@ -590,6 +587,7 @@ struct BTree {
 
 using namespace std;
 
+#include <csignal>
 #include <algorithm>
 #include <fstream>
 #include <string>
@@ -643,6 +641,39 @@ void printInfos(BTreeNode* root)
         << " bytesFree:" << bytesFr << " fillfactor:" << (1 - (bytesFr / ((double)cnt * pageSize))) << endl;
 }
 
+void pr(uint8_t* s, unsigned len) {
+   for (unsigned i=0; i<len; i++)
+      cout << (int)(unsigned char)s[i] << ",";
+}
+
+void printTree(BTreeNode* node) {
+   cout << (node->isLeaf?"L":"I") << " " << node << endl;
+
+   if (node->isLeaf) {
+      for (unsigned i=0; i<node->count; i++) {
+         pr(node->getLowerFenceKey(), node->prefixLength);
+         cout << " ";
+         pr(node->getKey(i), node->getKeyLen(i));
+         cout << endl;
+      }
+      cout << endl;
+      return;
+   }
+
+   for (unsigned i=0; i<node->count; i++) {
+         pr(node->getLowerFenceKey(), node->prefixLength);
+         cout << " ";
+         pr(node->getKey(i), node->getKeyLen(i));
+         cout << " " << node->getChild(i);
+         cout << endl;
+   }
+   cout << " " << node->upper;
+
+   for (unsigned i=0; i<node->count; i++)
+      printTree(node->getChild(i));
+   printTree(node->upper);
+}
+
 void runTest(PerfEvent& e, vector<string>& data)
 {
    if (getenv("SHUF"))
@@ -666,8 +697,10 @@ void runTest(PerfEvent& e, vector<string>& data)
       e.setParam("op", "insert");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
-         if (i==24981) raise(SIGTRAP);  //j = 1940
+         //if (i==24981) printTree(t.root); //raise(SIGTRAP);  //j = 1940
+         if (i==24981) raise(SIGTRAP);
          t.insert((uint8_t*)data[i].data(), data[i].size());
+         //if (i==24981) { cout << "XXX"; printTree(t.root); }
 
          //for (uint64_t j=0; j<=i; j+=1) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
          //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size()-8)) throw;
