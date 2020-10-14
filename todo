@@ -7,3 +7,8 @@
 -check merge
 -check asserts
 -assert(keyLength>=4); => test short misses
+-header
+
+-hint
+-trie
+-manual memcmp => check if in cache line or copy key

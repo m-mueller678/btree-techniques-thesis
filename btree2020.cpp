@@ -162,10 +162,10 @@ struct BTreeNode : public BTreeNodeHeader {
          hint[i] = slot[dist * (i + 1)].head;
    }
 
-   void searchHint(uint32_t keyHead, unsigned& lower, unsigned& upper)
+   void searchHint(uint32_t keyHead, unsigned& lowerOut, unsigned& upperOut)
    {
       if (count > hintCount * 2) {
-         unsigned dist = upper / (hintCount + 1);
+         unsigned dist = upperOut / (hintCount + 1);
          unsigned pos, pos2;
          for (pos = 0; pos < hintCount; pos++)
             if (hint[pos] >= keyHead)
@@ -173,34 +173,42 @@ struct BTreeNode : public BTreeNodeHeader {
          for (pos2 = pos; pos2 < hintCount; pos2++)
             if (hint[pos2] != keyHead)
                break;
-         lower = pos * dist;
+         lowerOut = pos * dist;
          if (pos2 < hintCount)
-            upper = (pos2 + 1) * dist;
+            upperOut = (pos2 + 1) * dist;
       }
    }
 
-   // lower bound search, returns slotId (if equalityOnly=true -1 is returned on no match)
-   template <bool equalityOnly = false>
-   int lowerBound(uint8_t* key, unsigned keyLength)
+   // lower bound search, returns slotId, foundOut indicates if the key is an exact match
+   unsigned lowerBound(uint8_t* key, unsigned keyLength, bool& foundOut)
    {
-      if (equalityOnly) {
-         if ((keyLength < prefixLength) || (bcmp(key, getLowerFenceKey(), prefixLength) != 0))
-            return -1;
-      } else {
-         int prefixCmp = cmpKeys(key, getLowerFenceKey(), min(keyLength, prefixLength), prefixLength);
-         if (prefixCmp < 0)
-            return 0;
-         else if (prefixCmp > 0)
-            return count;
-      }
-      key += prefixLength;
-      keyLength -= prefixLength;
+      foundOut = false;
 
+      // check prefix
+      if (prefixLength <= keyLength) {
+         int prefixCmp = memcmp(key, getLowerFenceKey(), prefixLength);
+         if (prefixCmp < 0) {
+            return 0;
+         } else if (prefixCmp > 0) {
+            return count;
+         }
+         key += prefixLength;
+         keyLength -= prefixLength;
+      } else {
+         if (memcmp(key, getLowerFenceKey(), keyLength) <= 0) {
+            return 0;
+         } else {
+            return count;
+         }
+      }
+
+      // check hint
       unsigned lower = 0;
       unsigned upper = count;
       uint32_t keyHead = head(key, keyLength);
       searchHint(keyHead, lower, upper);
 
+      // binary search on remaining range
       while (lower < upper) {
          unsigned mid = ((upper - lower) / 2) + lower;
          if (keyHead < slot[mid].head) {
@@ -214,31 +222,37 @@ struct BTreeNode : public BTreeNodeHeader {
             } else if (keyLength > slot[mid].len) {
                lower = mid + 1;
             } else {
+               foundOut = true;
                return mid;
             }
          } else {
             // head is equal, but full comparison necessary
-            assert(keyLength >= 4);
-            int cmp = cmpKeys(key + 4, getKey(mid) + 4, keyLength - 4, getKeyLen(mid) - 4);
+            int cmp = cmpKeys(key, getKey(mid), keyLength, getKeyLen(mid));
             if (cmp < 0) {
                upper = mid;
             } else if (cmp > 0) {
                lower = mid + 1;
             } else {
+               foundOut = true;
                return mid;
             }
          }
       }
-      if (equalityOnly)
-         return -1;
       return lower;
+   }
+
+   // lowerBound wrapper ignoring exact match argument (for convenience)
+   unsigned lowerBound(uint8_t* key, unsigned keyLength)
+   {
+      bool ignore;
+      return lowerBound(key, keyLength, ignore);
    }
 
    bool insert(uint8_t* key, unsigned keyLength, BTreeNode* value = nullptr)
    {
       if (!requestSpaceFor(spaceNeeded(keyLength)))
          return false;  // no space, insert fails
-      unsigned slotId = lowerBound<false>(key, keyLength);
+      unsigned slotId = lowerBound(key, keyLength);
       memmove(slot + slotId + 1, slot + slotId, sizeof(Slot) * (count - slotId));
       storeKeyValue(slotId, key, keyLength, value);
       count++;
@@ -258,9 +272,10 @@ struct BTreeNode : public BTreeNodeHeader {
 
    bool remove(uint8_t* key, unsigned keyLength)
    {
-      int slotId = lowerBound<true>(key, keyLength);
-      if (slotId == -1)
-         return false;  // key not found
+      bool found;
+      unsigned slotId = lowerBound(key, keyLength, found);
+      if (!found)
+         return false;
       return removeSlot(slotId);
    }
 
@@ -478,7 +493,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    BTreeNode* lookupInner(uint8_t* key, unsigned keyLength)
    {
-      unsigned pos = lowerBound<false>(key, keyLength);
+      unsigned pos = lowerBound(key, keyLength);
       if (pos == count)
          return upper;
       return getChild(pos);
@@ -506,11 +521,10 @@ struct BTree {
       BTreeNode* node = root;
       while (node->isInner())
          node = node->lookupInner(key, keyLength);
-      int pos = node->lowerBound<true>(key, keyLength);
-      if (pos != -1) {
-         return true;
-      }
-      return false;
+      bool found;
+      unsigned pos = node->lowerBound(key, keyLength, found);
+      static_cast<void>(pos);
+      return found;
    }
 
    void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength)
@@ -563,10 +577,10 @@ struct BTree {
    {
       BTreeNode* node = root;
       BTreeNode* parent = nullptr;
-      int pos = 0;
+      unsigned pos = 0;
       while (node->isInner()) {
          parent = node;
-         pos = node->lowerBound<false>(key, keyLength);
+         pos = node->lowerBound(key, keyLength);
          node = (pos == node->count) ? node->upper : node->getChild(pos);
       }
       if (!node->remove(key, keyLength))
@@ -655,23 +669,29 @@ void runTest(PerfEvent& e, vector<string>& data)
    e.setParam("factr", "0");
    e.setParam("base", "0");
    {
+      // insert
       e.setParam("op", "insert");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
          t.insert((uint8_t*)data[i].data(), data[i].size());
 
-         // for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
+         //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
       }
+      printInfos(t.root);
    }
 
    {
+      // point lookup
       e.setParam("op", "lookup");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++)
          if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
             throw;
    }
-   printInfos(t.root);
+
+   // prefix lookup
+   for (uint64_t i = 0; i < count; i++)
+      t.lookup((uint8_t*)data[i].data(), data[i].size()-(data[i].size()/4));
 
    {
       for (uint64_t i = 0; i < count; i += 4)
