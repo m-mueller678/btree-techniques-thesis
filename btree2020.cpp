@@ -195,6 +195,23 @@ struct BTreeNode : public BTreeNodeHeader {
       searchHint(keyHead, lower, upper);
 
       // binary search on remaining range
+      if (keyLength<=4) {
+         uint32_t mask = ~0 << ((4-keyLength)*8);
+         while (lower < upper) {
+            unsigned mid = ((upper - lower) / 2) + lower;
+            if (keyHead < (slot[mid].head&mask)) {
+               upper = mid;
+            } else if (keyHead > (slot[mid].head&mask)) {
+               lower = mid + 1;
+            } else {
+               foundOut = true;
+               return mid;
+            }
+         }
+         return lower;
+      }
+
+      // binary search on remaining range
       while (lower < upper) {
          unsigned mid = ((upper - lower) / 2) + lower;
          if (keyHead < slot[mid].head) {
