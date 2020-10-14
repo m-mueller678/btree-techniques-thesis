@@ -89,7 +89,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    static constexpr unsigned maxKeySize = ((pageSize - sizeof(BTreeNodeHeader) - (2 * sizeof(Slot)))) / 4;
 
-   BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) { }
+   BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
 
    uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
    bool isInner() { return !isLeaf; }
@@ -675,7 +675,7 @@ void runTest(PerfEvent& e, vector<string>& data)
       for (uint64_t i = 0; i < count; i++) {
          t.insert((uint8_t*)data[i].data(), data[i].size());
 
-         //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
+         // for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
       }
       printInfos(t.root);
    }
@@ -691,7 +691,7 @@ void runTest(PerfEvent& e, vector<string>& data)
 
    // prefix lookup
    for (uint64_t i = 0; i < count; i++)
-      t.lookup((uint8_t*)data[i].data(), data[i].size()-(data[i].size()/4));
+      t.lookup((uint8_t*)data[i].data(), data[i].size() - (data[i].size() / 4));
 
    {
       for (uint64_t i = 0; i < count; i += 4)
