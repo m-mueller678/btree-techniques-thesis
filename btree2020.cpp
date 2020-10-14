@@ -586,7 +586,7 @@ struct BTree {
       if (!node->remove(key, keyLength))
          return false;  // key not found
 
-      // merge if necessary
+      // merge if underfull
       if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
          // find neighbor and merge
          if (parent && (parent->count >= 2) && (pos + 1) < parent->count) {  // XXX
