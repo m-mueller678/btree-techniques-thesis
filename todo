@@ -4,6 +4,11 @@
 -test.cpp with payloads
 -duplicates
 
+
+optimizations:
+-slot is enough short cut
+-prefix comparison: always bcmp first?
+
 -hint
 -trie
 -manual memcmp => check if in cache line or copy key

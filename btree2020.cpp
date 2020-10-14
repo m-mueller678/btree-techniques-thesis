@@ -1,3 +1,6 @@
+#include <csignal>
+
+
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -5,7 +8,7 @@
 struct BTreeNode;
 
 // maximum page size (in bytes) is 65536
-static const unsigned pageSize = 4 * 1024;
+static const unsigned pageSize = 4096;
 
 struct BTreeNodeHeader {
    static const unsigned underFullSize = pageSize - (pageSize / 8);  // merge nodes below this size
@@ -37,15 +40,6 @@ struct BTreeNodeHeader {
 static unsigned min(unsigned a, unsigned b)
 {
    return a < b ? a : b;
-}
-
-// Compare two strings
-static int cmpKeys(uint8_t* a, uint8_t* b, unsigned aLength, unsigned bLength)
-{
-   int c = memcmp(a, b, min(aLength, bLength));
-   if (c)
-      return c;
-   return (aLength - bLength);
 }
 
 template <class T>
@@ -179,28 +173,33 @@ struct BTreeNode : public BTreeNodeHeader {
       }
    }
 
-   // lower bound search, returns slotId, foundOut indicates if the key is an exact match
+   static int keyContained(uint8_t* k, unsigned kLength, uint8_t* s, unsigned sLength)
+   {
+      int cmp = memcmp(k, s, min(kLength, sLength));
+      if (cmp)
+         return cmp;
+      if (kLength < sLength)
+         return -1;
+      return cmp;
+   }
+
+   // lower bound search, returns slotId, foundOut indicates if there is an exact match
    unsigned lowerBound(uint8_t* key, unsigned keyLength, bool& foundOut)
    {
       foundOut = false;
 
       // check prefix
-      if (prefixLength <= keyLength) {
-         int prefixCmp = memcmp(key, getLowerFenceKey(), prefixLength);
-         if (prefixCmp < 0) {
+      {
+         int cmp = memcmp(key, getLowerFenceKey(), min(keyLength, prefixLength));
+         if (cmp < 0) // key is less than prefix
             return 0;
-         } else if (prefixCmp > 0) {
+         if (cmp > 0) // key is greater than prefix
             return count;
-         }
-         key += prefixLength;
-         keyLength -= prefixLength;
-      } else {
-         if (memcmp(key, getLowerFenceKey(), keyLength) <= 0) {
+         if (keyLength < prefixLength) // key is equal but shorter than prefix
             return 0;
-         } else {
-            return count;
-         }
       }
+      key += prefixLength;
+      keyLength -= prefixLength;
 
       // check hint
       unsigned lower = 0;
@@ -215,26 +214,22 @@ struct BTreeNode : public BTreeNodeHeader {
             upper = mid;
          } else if (keyHead > slot[mid].head) {
             lower = mid + 1;
-         } else if (slot[mid].len <= 4) {
-            // head is equal and we don't have to check rest of key
-            if (keyLength < slot[mid].len) {
-               upper = mid;
-            } else if (keyLength > slot[mid].len) {
-               lower = mid + 1;
-            } else {
-               foundOut = true;
-               return mid;
-            }
          } else {
-            // head is equal, but full comparison necessary
-            int cmp = cmpKeys(key, getKey(mid), keyLength, getKeyLen(mid));
+            int cmp = memcmp(key, getKey(mid), min(keyLength, getKeyLen(mid)));
             if (cmp < 0) {
                upper = mid;
             } else if (cmp > 0) {
                lower = mid + 1;
             } else {
-               foundOut = true;
-               return mid;
+               if (keyLength < getKeyLen(mid)) { // key is shorter
+                  foundOut = true;
+                  upper = mid;
+               } else if (keyLength > getKeyLen(mid)) { // key is longer
+                  lower = mid + 1;
+               } else {
+                  foundOut = true;
+                  return mid;
+               }
             }
          }
       }
@@ -663,6 +658,14 @@ void runTest(PerfEvent& e, vector<string>& data)
    if (getenv("SHUF"))
       random_shuffle(data.begin(), data.end());
 
+   // add payload
+   unsigned payloadSize = 8;
+   for (uint64_t i=0; i<data.size(); i++) {
+      string& s = data[i];
+      s.append("ABCDEDFG");
+      *(uint64_t*)(s.data() + s.size() - payloadSize) = i;
+   }
+
    BTree t;
    uint64_t count = data.size();
    e.setParam("type", "btr");
@@ -673,19 +676,30 @@ void runTest(PerfEvent& e, vector<string>& data)
       e.setParam("op", "insert");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
+         if (i==24981) raise(SIGTRAP);  //j = 1940
          t.insert((uint8_t*)data[i].data(), data[i].size());
 
-         // for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
+         //for (uint64_t j=0; j<=i; j+=1) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
+         //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size()-8)) throw;
       }
       printInfos(t.root);
    }
 
    {
-      // point lookup
+      // lookup
       e.setParam("op", "lookup");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++)
          if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
+            throw;
+   }
+
+   {
+      // lookup prefix
+      e.setParam("op", "lookup prefix");
+      PerfEventBlock b(e, count);
+      for (uint64_t i = 0; i < count; i++)
+         if (!t.lookup((uint8_t*)data[i].data(), data[i].size()-8))
             throw;
    }
 
