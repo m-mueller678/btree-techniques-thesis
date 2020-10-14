@@ -91,10 +91,10 @@ struct BTreeNode : public BTreeNodeHeader {
 
    BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
 
-   inline uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
-   inline bool isInner() { return !isLeaf; }
-   inline uint8_t* getLowerFenceKey() { return ptr() + lowerFence.offset; }
-   inline uint8_t* getUpperFenceKey() { return ptr() + upperFence.offset; }
+   uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
+   bool isInner() { return !isLeaf; }
+   uint8_t* getLowerFenceKey() { return ptr() + lowerFence.offset; }
+   uint8_t* getUpperFenceKey() { return ptr() + upperFence.offset; }
 
    unsigned freeSpace() { return dataOffset - (reinterpret_cast<uint8_t*>(slot + count) - ptr()); }
    unsigned freeSpaceAfterCompaction() { return pageSize - (reinterpret_cast<uint8_t*>(slot + count) - ptr()) - spaceUsed; }
@@ -114,22 +114,22 @@ struct BTreeNode : public BTreeNodeHeader {
    static BTreeNode* makeInner() { return new BTreeNode(false); }
 
    // String layout: restKey | Value
-   inline uint8_t* getKey(unsigned slotId) { return ptr() + slot[slotId].offset; }
-   inline unsigned getKeyLen(unsigned slotId) { return slot[slotId].len; }
-   inline unsigned getFullKeyLength(unsigned slotId) { return prefixLength + slot[slotId].len; }
-   inline void setChild(unsigned slotId, BTreeNode* child)
+   uint8_t* getKey(unsigned slotId) { return ptr() + slot[slotId].offset; }
+   unsigned getKeyLen(unsigned slotId) { return slot[slotId].len; }
+   unsigned getFullKeyLength(unsigned slotId) { return prefixLength + slot[slotId].len; }
+   void setChild(unsigned slotId, BTreeNode* child)
    {
       assert(isInner());
       memcpy(ptr() + slot[slotId].offset + slot[slotId].len, &child, sizeof(BTreeNode*));
    }
-   inline BTreeNode* getChild(unsigned slotId)
+   BTreeNode* getChild(unsigned slotId)
    {
       assert(isInner());
       return loadUnaligned<BTreeNode*>(ptr() + slot[slotId].offset + slot[slotId].len);
    }
 
    // Copy key at "slotId" to "out" array
-   inline void copyFullKey(unsigned slotId, uint8_t* out)
+   void copyFullKey(unsigned slotId, uint8_t* out)
    {
       memcpy(out, getLowerFenceKey(), prefixLength);
       memcpy(out + prefixLength, getKey(slotId), getKeyLen(slotId));
