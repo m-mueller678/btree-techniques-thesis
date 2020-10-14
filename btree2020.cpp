@@ -34,14 +34,6 @@ struct BTreeNodeHeader {
    ~BTreeNodeHeader() {}
 };
 
-template <class T>
-T loadUnaligned(void* p)
-{
-   T x;
-   memcpy(&x, p, sizeof(T));
-   return x;
-}
-
 static unsigned min(unsigned a, unsigned b)
 {
    return a < b ? a : b;
@@ -54,6 +46,14 @@ static int cmpKeys(uint8_t* a, uint8_t* b, unsigned aLength, unsigned bLength)
    if (c)
       return c;
    return (aLength - bLength);
+}
+
+template <class T>
+T loadUnaligned(void* p)
+{
+   T x;
+   memcpy(&x, p, sizeof(T));
+   return x;
 }
 
 // Get order-preserving head of key (assuming little endian)
@@ -89,7 +89,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    static constexpr unsigned maxKeySize = ((pageSize - sizeof(BTreeNodeHeader) - (2 * sizeof(Slot)))) / 4;
 
-   BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
+   BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) { }
 
    uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
    bool isInner() { return !isLeaf; }
