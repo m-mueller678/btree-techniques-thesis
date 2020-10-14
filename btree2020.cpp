@@ -173,16 +173,6 @@ struct BTreeNode : public BTreeNodeHeader {
       }
    }
 
-   static int keyContained(uint8_t* k, unsigned kLength, uint8_t* s, unsigned sLength)
-   {
-      int cmp = memcmp(k, s, min(kLength, sLength));
-      if (cmp)
-         return cmp;
-      if (kLength < sLength)
-         return -1;
-      return cmp;
-   }
-
    // lower bound search, returns slotId, foundOut indicates if there is an exact match
    unsigned lowerBound(uint8_t* key, unsigned keyLength, bool& foundOut)
    {
