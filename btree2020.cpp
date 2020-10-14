@@ -113,19 +113,22 @@ struct BTreeNode : public BTreeNodeHeader {
    static BTreeNode* makeLeaf() { return new BTreeNode(true); }
    static BTreeNode* makeInner() { return new BTreeNode(false); }
 
-   // String layout: restKey | Value
    uint8_t* getKey(unsigned slotId) { return ptr() + slot[slotId].offset; }
+
    unsigned getKeyLen(unsigned slotId) { return slot[slotId].len; }
+
    unsigned getFullKeyLength(unsigned slotId) { return prefixLength + slot[slotId].len; }
-   void setChild(unsigned slotId, BTreeNode* child)
-   {
-      assert(isInner());
-      memcpy(ptr() + slot[slotId].offset + slot[slotId].len, &child, sizeof(BTreeNode*));
-   }
+
    BTreeNode* getChild(unsigned slotId)
    {
       assert(isInner());
       return loadUnaligned<BTreeNode*>(ptr() + slot[slotId].offset + slot[slotId].len);
+   }
+
+   void setChild(unsigned slotId, BTreeNode* child)
+   {
+      assert(isInner());
+      memcpy(ptr() + slot[slotId].offset + slot[slotId].len, &child, sizeof(BTreeNode*));
    }
 
    // Copy key at "slotId" to "out" array
