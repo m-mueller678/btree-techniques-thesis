@@ -49,7 +49,7 @@ static int cmpKeys(uint8_t* a, uint8_t* b, unsigned aLength, unsigned bLength)
 }
 
 template <class T>
-T loadUnaligned(void* p)
+static T loadUnaligned(void* p)
 {
    T x;
    memcpy(&x, p, sizeof(T));
