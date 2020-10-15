@@ -8,6 +8,7 @@
 optimizations:
 -slot is enough short cut
 -prefix comparison: always bcmp first?
+-long2: dup root node -> shorter separators
 
 -hint
 -trie

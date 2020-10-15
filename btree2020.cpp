@@ -524,6 +524,7 @@ struct BTree {
 
    BTree() : root(BTreeNode::makeLeaf()) {}
 
+   // point lookup, on match copies payload to payloadOut and returns the size of the payload, on failure returns -1
    int lookup(uint8_t* key, unsigned keyLength, uint8_t* payloadOut, unsigned payloadSize)
    {
       BTreeNode* node = root;
@@ -531,17 +532,25 @@ struct BTree {
          node = node->lookupInner(key, keyLength);
       bool found;
       unsigned pos = node->lowerBound(key, keyLength, found);
-      if (!found)
-         return -1;
+      if (!found) {
+         if (pos < node->count)
+            return -1;
+         // corner case
+         throw;
+      }
 
       assert(pos < node->count);
-      payloadSize = min(payloadSize, node->getFullKeyLength(pos)-keyLength);
+      unsigned fullLen = node->getFullKeyLength(pos);
+      unsigned restLen = fullLen-keyLength;
+      payloadSize = min(payloadSize, fullLen-keyLength);
       if (keyLength >= node->prefixLength) {
          memcpy(payloadOut, node->getKey(pos) + node->getKeyLen(pos) - payloadSize, payloadSize);
       } else {
-         memcpy(payloadOut, node->getPrefix() + , );
+         uint8_t fullKey[fullLen];
+         node->copyFullKey(pos, fullKey);
+         memcpy(payloadOut, fullKey+fullLen-payloadSize, payloadSize);
       }
-      return payloadSize;
+      return restLen;
    }
 
    bool lookup(uint8_t* key, unsigned keyLength)
@@ -687,7 +696,7 @@ void printInfos(BTreeNode* root)
 
 void pr(uint8_t* s, unsigned len) {
    for (unsigned i=0; i<len; i++)
-      cout << (int)(unsigned char)s[i] << ",";
+      cout << s[i];
 }
 
 void printTree(BTreeNode* node) {
@@ -722,6 +731,8 @@ void runTest(PerfEvent& e, vector<string>& data)
 {
    if (getenv("SHUF"))
       random_shuffle(data.begin(), data.end());
+   if (getenv("SORT"))
+      sort(data.begin(), data.end());
 
    // add payload
    unsigned payloadSize = 8;
@@ -741,10 +752,7 @@ void runTest(PerfEvent& e, vector<string>& data)
       e.setParam("op", "insert");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
-         //if (i==24981) printTree(t.root); //raise(SIGTRAP);  //j = 1940
-         //if (i==24981) raise(SIGTRAP);
          t.insert((uint8_t*)data[i].data(), data[i].size());
-         //if (i==24981) { cout << "XXX"; printTree(t.root); }
 
          //for (uint64_t j=0; j<=i; j+=1) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
          //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size()-8)) throw;
@@ -765,9 +773,19 @@ void runTest(PerfEvent& e, vector<string>& data)
       // lookup prefix
       e.setParam("op", "lookup prefix");
       PerfEventBlock b(e, count);
-      for (uint64_t i = 0; i < count; i++)
-         if (!t.lookup((uint8_t*)data[i].data(), data[i].size()-8))
+      for (uint64_t i = 0; i < count; i++) {
+         union {
+            uint64_t payload;
+            uint8_t payloadArray[8];
+         };
+         //if (i==1) {
+            //printTree(t.root);
+         //raise(SIGTRAP);
+         //}
+         int resultLen = t.lookup((uint8_t*)data[i].data(), data[i].size()-8, payloadArray, 8);
+         if (!((payload == i) || (resultLen>8)))
             throw;
+      }
    }
 
    // prefix lookup
