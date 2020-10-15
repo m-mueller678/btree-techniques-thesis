@@ -475,7 +475,7 @@ struct BTreeNode : public BTreeNodeHeader {
       }
 
       // find best separator
-      unsigned bestSlot = count / 2; // XXX
+      unsigned bestSlot = count / 2; // XXX: compare with lowerFence or with 0?, only shrinks, mid bias
       unsigned bestPrefixLength = commonPrefix(bestSlot, 0);
       for (unsigned i = lower; i < upper; i++) {
          unsigned prefix = commonPrefix(i, 0);
