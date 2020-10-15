@@ -192,10 +192,9 @@ struct BTreeNode : public BTreeNodeHeader {
       unsigned lower = 0;
       unsigned upper = count;
       uint32_t keyHead = head(key, keyLength);
-      searchHint(keyHead, lower, upper);
 
       // binary search on remaining range
-      if (keyLength<=4) {
+      if (keyLength<4) {
          uint32_t mask = ~0 << ((4-keyLength)*8);
          while (lower < upper) {
             unsigned mid = ((upper - lower) / 2) + lower;
@@ -203,13 +202,22 @@ struct BTreeNode : public BTreeNodeHeader {
                upper = mid;
             } else if (keyHead > (slot[mid].head&mask)) {
                lower = mid + 1;
-            } else {
-               foundOut = true;
-               return mid;
+            } else { // compared bytes are equal
+               if (keyLength < getKeyLen(mid)) { // key is shorter
+                  foundOut = true;
+                  upper = mid;
+               } else if (keyLength > getKeyLen(mid)) { // key is longer
+                  lower = mid + 1;
+               } else {
+                  foundOut = true;
+                  return mid;
+               }
             }
          }
          return lower;
       }
+
+      searchHint(keyHead, lower, upper);
 
       // binary search on remaining range
       while (lower < upper) {
@@ -218,7 +226,7 @@ struct BTreeNode : public BTreeNodeHeader {
             upper = mid;
          } else if (keyHead > slot[mid].head) {
             lower = mid + 1;
-         } else {
+         } else { // compared bytes are equal
             int cmp = memcmp(key, getKey(mid), min(keyLength, getKeyLen(mid)));
             if (cmp < 0) {
                upper = mid;
@@ -715,7 +723,7 @@ void runTest(PerfEvent& e, vector<string>& data)
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
          //if (i==24981) printTree(t.root); //raise(SIGTRAP);  //j = 1940
-         if (i==24981) raise(SIGTRAP);
+         //if (i==24981) raise(SIGTRAP);
          t.insert((uint8_t*)data[i].data(), data[i].size());
          //if (i==24981) { cout << "XXX"; printTree(t.root); }
 
