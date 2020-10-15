@@ -86,6 +86,7 @@ struct BTreeNode : public BTreeNodeHeader {
    bool isInner() { return !isLeaf; }
    uint8_t* getLowerFenceKey() { return ptr() + lowerFence.offset; }
    uint8_t* getUpperFenceKey() { return ptr() + upperFence.offset; }
+   uint8_t* getPrefix() { return ptr() + lowerFence.offset; } // any key on page is ok
 
    unsigned freeSpace() { return dataOffset - (reinterpret_cast<uint8_t*>(slot + count) - ptr()); }
    unsigned freeSpaceAfterCompaction() { return pageSize - (reinterpret_cast<uint8_t*>(slot + count) - ptr()) - spaceUsed; }
@@ -125,7 +126,7 @@ struct BTreeNode : public BTreeNodeHeader {
    // Copy key at "slotId" to "out" array
    void copyFullKey(unsigned slotId, uint8_t* out)
    {
-      memcpy(out, getLowerFenceKey(), prefixLength);
+      memcpy(out, getPrefix(), prefixLength);
       memcpy(out + prefixLength, getKey(slotId), getKeyLen(slotId));
    }
 
@@ -177,7 +178,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
       // check prefix
       {
-         int cmp = memcmp(key, getLowerFenceKey(), min(keyLength, prefixLength));
+         int cmp = memcmp(key, getPrefix(), min(keyLength, prefixLength));
          if (cmp < 0) // key is less than prefix
             return 0;
          if (cmp > 0) // key is greater than prefix
@@ -494,7 +495,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    void getSep(uint8_t* sepKeyOut, SeparatorInfo info)
    {
-      memcpy(sepKeyOut, getLowerFenceKey(), prefixLength);
+      memcpy(sepKeyOut, getPrefix(), prefixLength);
       memcpy(sepKeyOut + prefixLength, getKey(info.slot + info.isTruncated), info.length - prefixLength);
    }
 
@@ -523,33 +524,51 @@ struct BTree {
 
    BTree() : root(BTreeNode::makeLeaf()) {}
 
-   bool lookup(uint8_t* key, unsigned keyLength)
+   int lookup(uint8_t* key, unsigned keyLength, uint8_t* payloadOut, unsigned payloadSize)
    {
       BTreeNode* node = root;
       while (node->isInner())
          node = node->lookupInner(key, keyLength);
       bool found;
       unsigned pos = node->lowerBound(key, keyLength, found);
-      static_cast<void>(pos);
-      return found;
+      if (!found)
+         return -1;
+
+      assert(pos < node->count);
+      payloadSize = min(payloadSize, node->getFullKeyLength(pos)-keyLength);
+      if (keyLength >= node->prefixLength) {
+         memcpy(payloadOut, node->getKey(pos) + node->getKeyLen(pos) - payloadSize, payloadSize);
+      } else {
+         memcpy(payloadOut, node->getPrefix() + , );
+      }
+      return payloadSize;
+   }
+
+   bool lookup(uint8_t* key, unsigned keyLength)
+   {
+      return lookup(key, keyLength, nullptr, 0) != -1;
    }
 
    void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength)
    {
+      // create new root if necessary
       if (!parent) {
-         // create new root
          parent = BTreeNode::makeInner();
          parent->upper = node;
          root = parent;
       }
+
+      // split
       BTreeNode::SeparatorInfo sepInfo = node->findSep();
       unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length);
-      if (parent->requestSpaceFor(spaceNeededParent)) {  // Is there enough space in the parent for the separator?
+      if (parent->requestSpaceFor(spaceNeededParent)) {  // is there enough space in the parent for the separator?
          uint8_t sepKey[sepInfo.length];
          node->getSep(sepKey, sepInfo);
          node->splitNode(parent, sepInfo.slot, sepKey, sepInfo.length);
-      } else
-         ensureSpace(parent, spaceNeededParent, key, keyLength);  // Must split parent first to make space for separator
+      } else {
+         // must split parent first to make space for separator, restart from root to do this
+         ensureSpace(parent, spaceNeededParent, key, keyLength);
+      }
    }
 
    void ensureSpace(BTreeNode* toSplit, unsigned spaceNeeded, uint8_t* key, unsigned keyLength)
@@ -676,7 +695,7 @@ void printTree(BTreeNode* node) {
 
    if (node->isLeaf) {
       for (unsigned i=0; i<node->count; i++) {
-         pr(node->getLowerFenceKey(), node->prefixLength);
+         pr(node->getPrefix(), node->prefixLength);
          cout << " ";
          pr(node->getKey(i), node->getKeyLen(i));
          cout << endl;
@@ -686,7 +705,7 @@ void printTree(BTreeNode* node) {
    }
 
    for (unsigned i=0; i<node->count; i++) {
-         pr(node->getLowerFenceKey(), node->prefixLength);
+         pr(node->getPrefix(), node->prefixLength);
          cout << " ";
          pr(node->getKey(i), node->getKeyLen(i));
          cout << " " << node->getChild(i);
