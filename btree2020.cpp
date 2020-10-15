@@ -535,6 +535,7 @@ struct BTree {
       if (!found) {
          if (pos < node->count)
             return -1;
+         return -1;
          // corner case
          throw;
       }
