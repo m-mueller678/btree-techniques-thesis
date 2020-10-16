@@ -197,7 +197,7 @@ struct BTreeNode : public BTreeNodeHeader {
       // binary search on remaining range
       if (keyLength<4) {
          uint32_t mask = ~0 << ((4-keyLength)*8);
-         if (keyLength == 0)
+         if (keyLength == 0) // XXX
             mask = 0;
          while (lower < upper) {
             unsigned mid = ((upper - lower) / 2) + lower;
