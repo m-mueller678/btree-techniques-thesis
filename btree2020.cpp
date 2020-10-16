@@ -8,7 +8,7 @@ struct BTreeNode;
 static const unsigned pageSize = 4096;
 
 struct BTreeNodeHeader {
-   static const unsigned underFullSize = pageSize - (pageSize / 8);  // merge nodes below this size
+   static const unsigned underFullSize = pageSize / 4;  // merge nodes below this size
 
    struct FenceKeySlot {
       uint16_t offset;
@@ -68,11 +68,11 @@ struct BTreeNode : public BTreeNodeHeader {
    struct Slot {
       uint16_t offset;
       uint16_t keyLen;
+      uint16_t payloadLen;
       union {
          uint32_t head;
          uint8_t headBytes[4];
       };
-      uint16_t payloadLen;
    } __attribute__((packed));
    union {
       Slot slot[(pageSize - sizeof(BTreeNodeHeader)) / sizeof(Slot)];  // grows from front
@@ -162,15 +162,13 @@ struct BTreeNode : public BTreeNodeHeader {
       foundOut = false;
 
       // check prefix
-      {
-         int cmp = memcmp(key, getPrefix(), min(keyLength, prefixLength));
-         if (cmp < 0) // key is less than prefix
-            return 0;
-         if (cmp > 0) // key is greater than prefix
-            return count;
-         if (keyLength < prefixLength) // key is equal but shorter than prefix
-            return 0;
-      }
+      int cmp = memcmp(key, getPrefix(), min(keyLength, prefixLength));
+      if (cmp < 0) // key is less than prefix
+         return 0;
+      if (cmp > 0) // key is greater than prefix
+         return count;
+      if (keyLength < prefixLength) // key is equal but shorter than prefix
+         return 0;
       key += prefixLength;
       keyLength -= prefixLength;
 
@@ -178,7 +176,6 @@ struct BTreeNode : public BTreeNodeHeader {
       unsigned lower = 0;
       unsigned upper = count;
       uint32_t keyHead = head(key, keyLength);
-
       searchHint(keyHead, lower, upper);
 
       // binary search on remaining range
@@ -188,7 +185,7 @@ struct BTreeNode : public BTreeNodeHeader {
             upper = mid;
          } else if (keyHead > slot[mid].head) {
             lower = mid + 1;
-         } else { // compared bytes are equal
+         } else { // head is equal, check full key
             int cmp = memcmp(key, getKey(mid), min(keyLength, slot[mid].keyLen));
             if (cmp < 0) {
                upper = mid;
