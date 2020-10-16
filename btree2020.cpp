@@ -192,7 +192,6 @@ struct BTreeNode : public BTreeNodeHeader {
                lower = mid + 1;
             } else { // compared bytes are equal
                if (keyLength < slot[mid].keyLen) { // key is shorter
-                  foundOut = true;
                   upper = mid;
                } else if (keyLength > slot[mid].keyLen) { // key is longer
                   lower = mid + 1;
@@ -222,7 +221,6 @@ struct BTreeNode : public BTreeNodeHeader {
                lower = mid + 1;
             } else {
                if (keyLength < slot[mid].keyLen) { // key is shorter
-                  foundOut = true;
                   upper = mid;
                } else if (keyLength > slot[mid].keyLen) { // key is longer
                   lower = mid + 1;
