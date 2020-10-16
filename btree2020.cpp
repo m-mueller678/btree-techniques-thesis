@@ -67,12 +67,13 @@ static uint32_t head(uint8_t* key, unsigned keyLength)
 struct BTreeNode : public BTreeNodeHeader {
    struct Slot {
       uint16_t offset;
-      uint16_t len;
+      uint16_t keyLen;
       union {
          uint32_t head;
          uint8_t headBytes[4];
       };
-   };
+      uint16_t payloadLen;
+   } __attribute__((packed));
    union {
       Slot slot[(pageSize - sizeof(BTreeNodeHeader)) / sizeof(Slot)];  // grows from front
       uint8_t heap[pageSize - sizeof(BTreeNodeHeader)];                // grows from back
@@ -84,8 +85,8 @@ struct BTreeNode : public BTreeNodeHeader {
 
    uint8_t* ptr() { return reinterpret_cast<uint8_t*>(this); }
    bool isInner() { return !isLeaf; }
-   uint8_t* getLowerFenceKey() { return ptr() + lowerFence.offset; }
-   uint8_t* getUpperFenceKey() { return ptr() + upperFence.offset; }
+   uint8_t* getLowerFence() { return ptr() + lowerFence.offset; }
+   uint8_t* getUpperFence() { return ptr() + upperFence.offset; }
    uint8_t* getPrefix() { return ptr() + lowerFence.offset; } // any key on page is ok
 
    unsigned freeSpace() { return dataOffset - (reinterpret_cast<uint8_t*>(slot + count) - ptr()); }
@@ -106,35 +107,19 @@ struct BTreeNode : public BTreeNodeHeader {
    static BTreeNode* makeInner() { return new BTreeNode(false); }
 
    uint8_t* getKey(unsigned slotId) { return ptr() + slot[slotId].offset; }
-
-   unsigned getKeyLen(unsigned slotId) { return slot[slotId].len; }
-
-   unsigned getFullKeyLength(unsigned slotId) { return prefixLength + slot[slotId].len; }
+   uint8_t* getPayload(unsigned slotId) { return ptr() + slot[slotId].offset + slot[slotId].keyLen; }
 
    BTreeNode* getChild(unsigned slotId)
    {
       assert(isInner());
-      return loadUnaligned<BTreeNode*>(ptr() + slot[slotId].offset + slot[slotId].len);
-   }
-
-   void setChild(unsigned slotId, BTreeNode* child)
-   {
-      assert(isInner());
-      memcpy(ptr() + slot[slotId].offset + slot[slotId].len, &child, sizeof(BTreeNode*));
-   }
-
-   // Copy key at "slotId" to "out" array
-   void copyFullKey(unsigned slotId, uint8_t* out)
-   {
-      memcpy(out, getPrefix(), prefixLength);
-      memcpy(out + prefixLength, getKey(slotId), getKeyLen(slotId));
+      return loadUnaligned<BTreeNode*>(getPayload(slotId));
    }
 
    // How much space would inserting a new key of length "keyLength" require?
-   unsigned spaceNeeded(unsigned keyLength)
+   unsigned spaceNeeded(unsigned keyLength, unsigned payloadLength)
    {
       assert(keyLength >= prefixLength);
-      return sizeof(Slot) + (keyLength - prefixLength) + (isInner() ? sizeof(BTreeNode*) : 0);
+      return sizeof(Slot) + (keyLength - prefixLength) + payloadLength;
    }
 
    void makeHint()
@@ -206,10 +191,10 @@ struct BTreeNode : public BTreeNodeHeader {
             } else if (keyHead > (slot[mid].head&mask)) {
                lower = mid + 1;
             } else { // compared bytes are equal
-               if (keyLength < getKeyLen(mid)) { // key is shorter
+               if (keyLength < slot[mid].keyLen) { // key is shorter
                   foundOut = true;
                   upper = mid;
-               } else if (keyLength > getKeyLen(mid)) { // key is longer
+               } else if (keyLength > slot[mid].keyLen) { // key is longer
                   lower = mid + 1;
                } else {
                   foundOut = true;
@@ -230,16 +215,16 @@ struct BTreeNode : public BTreeNodeHeader {
          } else if (keyHead > slot[mid].head) {
             lower = mid + 1;
          } else { // compared bytes are equal
-            int cmp = memcmp(key, getKey(mid), min(keyLength, getKeyLen(mid)));
+            int cmp = memcmp(key, getKey(mid), min(keyLength, slot[mid].keyLen));
             if (cmp < 0) {
                upper = mid;
             } else if (cmp > 0) {
                lower = mid + 1;
             } else {
-               if (keyLength < getKeyLen(mid)) { // key is shorter
+               if (keyLength < slot[mid].keyLen) { // key is shorter
                   foundOut = true;
                   upper = mid;
-               } else if (keyLength > getKeyLen(mid)) { // key is longer
+               } else if (keyLength > slot[mid].keyLen) { // key is longer
                   lower = mid + 1;
                } else {
                   foundOut = true;
@@ -258,13 +243,13 @@ struct BTreeNode : public BTreeNodeHeader {
       return lowerBound(key, keyLength, ignore);
    }
 
-   bool insert(uint8_t* key, unsigned keyLength, BTreeNode* value = nullptr)
+   bool insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned payloadLength)
    {
-      if (!requestSpaceFor(spaceNeeded(keyLength)))
+      if (!requestSpaceFor(spaceNeeded(keyLength, payloadLength)))
          return false;  // no space, insert fails
       unsigned slotId = lowerBound(key, keyLength);
       memmove(slot + slotId + 1, slot + slotId, sizeof(Slot) * (count - slotId));
-      storeKeyValue(slotId, key, keyLength, value);
+      storeKeyValue(slotId, key, keyLength, payload, payloadLength);
       count++;
       updateHint(slotId);
       return true;
@@ -272,8 +257,8 @@ struct BTreeNode : public BTreeNodeHeader {
 
    bool removeSlot(unsigned slotId)
    {
-      spaceUsed -= getKeyLen(slotId);
-      spaceUsed -= isInner() ? sizeof(BTreeNode*) : 0;
+      spaceUsed -= slot[slotId].keyLen;
+      spaceUsed -= slot[slotId].payloadLen;
       memmove(slot + slotId, slot + slotId + 1, sizeof(Slot) * (count - slotId - 1));
       count--;
       makeHint();
@@ -294,7 +279,7 @@ struct BTreeNode : public BTreeNodeHeader {
       unsigned should = freeSpaceAfterCompaction();
       static_cast<void>(should);
       BTreeNode tmp(isLeaf);
-      tmp.setFences(getLowerFenceKey(), lowerFence.length, getUpperFenceKey(), upperFence.length);
+      tmp.setFences(getLowerFence(), lowerFence.length, getUpperFence(), upperFence.length);
       copyKeyValueRange(&tmp, 0, 0, count);
       tmp.upper = upper;
       memcpy(reinterpret_cast<char*>(this), &tmp, sizeof(BTreeNode));
@@ -309,10 +294,10 @@ struct BTreeNode : public BTreeNodeHeader {
          assert(right->isLeaf);
          assert(parent->isInner());
          BTreeNode tmp(isLeaf);
-         tmp.setFences(getLowerFenceKey(), lowerFence.length, right->getUpperFenceKey(), right->upperFence.length);
+         tmp.setFences(getLowerFence(), lowerFence.length, right->getUpperFence(), right->upperFence.length);
          unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
          unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
-         unsigned spaceUpperBound =
+         unsigned spaceUpperBound = // XXX
              spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t*>(slot + count + right->count) - ptr()) + leftGrow + rightGrow;
          if (spaceUpperBound > pageSize)
             return false;
@@ -326,18 +311,18 @@ struct BTreeNode : public BTreeNodeHeader {
          assert(right->isInner());
          assert(parent->isInner());
          BTreeNode tmp(isLeaf);
-         tmp.setFences(getLowerFenceKey(), lowerFence.length, right->getUpperFenceKey(), right->upperFence.length);
+         tmp.setFences(getLowerFence(), lowerFence.length, right->getUpperFence(), right->upperFence.length);
          unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
          unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
-         unsigned extraKeyLength = parent->getFullKeyLength(slotId);
-         unsigned spaceUpperBound = spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t*>(slot + count + right->count) - ptr()) + leftGrow +
-                                    rightGrow + tmp.spaceNeeded(extraKeyLength);
+         unsigned extraKeyLength = parent->prefixLength + parent->slot[slotId].keyLen;
+         unsigned spaceUpperBound = spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t*>(slot + count + right->count) - ptr()) + leftGrow + rightGrow + tmp.spaceNeeded(extraKeyLength, sizeof(BTreeNode*));
          if (spaceUpperBound > pageSize)
             return false;
          copyKeyValueRange(&tmp, 0, 0, count);
          uint8_t extraKey[extraKeyLength];
-         parent->copyFullKey(slotId, extraKey);
-         storeKeyValue(count, extraKey, extraKeyLength, parent->getChild(slotId));
+         memcpy(extraKey, parent->getLowerFence(), parent->prefixLength);
+         memcpy(extraKey+parent->prefixLength, parent->getKey(slotId), parent->slot[slotId].keyLen);
+         storeKeyValue(count, extraKey, extraKeyLength, parent->getPayload(slotId), parent->slot[slotId].payloadLen);
          count++;
          right->copyKeyValueRange(&tmp, count, 0, right->count);
          parent->removeSlot(slotId);
@@ -347,22 +332,22 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    // store key/value pair at slotId
-   void storeKeyValue(uint16_t slotId, uint8_t* key, unsigned keyLength, BTreeNode* child)
+   void storeKeyValue(uint16_t slotId, uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned payloadLength)
    {
       // slot
       key += prefixLength;
       keyLength -= prefixLength;
       slot[slotId].head = head(key, keyLength);
-      slot[slotId].len = keyLength;
+      slot[slotId].keyLen = keyLength;
+      slot[slotId].payloadLen = payloadLength;
       // key
-      unsigned space = keyLength + (isInner() ? sizeof(BTreeNode*) : 0);
+      unsigned space = keyLength + payloadLength;
       dataOffset -= space;
       spaceUsed += space;
       slot[slotId].offset = dataOffset;
       assert(getKey(slotId) >= reinterpret_cast<uint8_t*>(&slot[slotId]));
       memcpy(getKey(slotId), key, keyLength);
-      if (isInner())
-         setChild(slotId, child);
+      memcpy(getPayload(slotId), payload, payloadLength);
    }
 
    void copyKeyValueRange(BTreeNode* dst, uint16_t dstSlot, uint16_t srcSlot, unsigned srcCount)
@@ -370,15 +355,16 @@ struct BTreeNode : public BTreeNodeHeader {
       if (prefixLength <= dst->prefixLength) {  // prefix grows
          unsigned diff = dst->prefixLength - prefixLength;
          for (unsigned i = 0; i < srcCount; i++) {
-            unsigned keyLength = getKeyLen(srcSlot + i) - diff;
-            unsigned space = keyLength + (isInner() ? sizeof(BTreeNode*) : 0);
+            unsigned newKeyLength = slot[srcSlot + i].keyLen - diff;
+            unsigned space = newKeyLength + slot[srcSlot + i].payloadLen;
             dst->dataOffset -= space;
             dst->spaceUsed += space;
             dst->slot[dstSlot + i].offset = dst->dataOffset;
-            uint8_t* key = ptr() + slot[srcSlot + i].offset + diff;
+            uint8_t* key = getKey(srcSlot + i) + diff;
             memcpy(dst->getKey(dstSlot + i), key, space);
-            dst->slot[dstSlot + i].head = head(key, keyLength);
-            dst->slot[dstSlot + i].len = keyLength;
+            dst->slot[dstSlot + i].head = head(key, newKeyLength);
+            dst->slot[dstSlot + i].keyLen = newKeyLength;
+            dst->slot[dstSlot + i].payloadLen = slot[srcSlot + i].payloadLen;
          }
       } else {
          for (unsigned i = 0; i < srcCount; i++)
@@ -390,10 +376,11 @@ struct BTreeNode : public BTreeNodeHeader {
 
    void copyKeyValue(uint16_t srcSlot, BTreeNode* dst, uint16_t dstSlot)
    {
-      unsigned fullLength = getFullKeyLength(srcSlot);
+      unsigned fullLength = slot[srcSlot].keyLen + prefixLength;
       uint8_t key[fullLength];
-      copyFullKey(srcSlot, key);
-      dst->storeKeyValue(dstSlot, key, fullLength, (isInner() ? getChild(srcSlot) : nullptr));
+      memcpy(key, getPrefix(), prefixLength);
+      memcpy(key+prefixLength, getKey(srcSlot), slot[srcSlot].keyLen);
+      dst->storeKeyValue(dstSlot, key, fullLength, getPayload(srcSlot), slot[srcSlot].payloadLen);
    }
 
    void insertFence(FenceKeySlot& fk, uint8_t* key, unsigned keyLength)
@@ -419,11 +406,11 @@ struct BTreeNode : public BTreeNodeHeader {
       assert(sepSlot > 0);
       assert(sepSlot < (pageSize / sizeof(BTreeNode*)));
       BTreeNode* nodeLeft = new BTreeNode(isLeaf);
-      nodeLeft->setFences(getLowerFenceKey(), lowerFence.length, sepKey, sepLength);
+      nodeLeft->setFences(getLowerFence(), lowerFence.length, sepKey, sepLength);
       BTreeNode tmp(isLeaf);
       BTreeNode* nodeRight = &tmp;
-      nodeRight->setFences(sepKey, sepLength, getUpperFenceKey(), upperFence.length);
-      bool succ = parent->insert(sepKey, sepLength, nodeLeft);
+      nodeRight->setFences(sepKey, sepLength, getUpperFence(), upperFence.length);
+      bool succ = parent->insert(sepKey, sepLength, reinterpret_cast<uint8_t*>(&nodeLeft), sizeof(BTreeNode*));
       static_cast<void>(succ);
       assert(succ);
       if (isLeaf) {
@@ -449,7 +436,7 @@ struct BTreeNode : public BTreeNodeHeader {
    unsigned commonPrefix(unsigned slotA, unsigned slotB)
    {
       assert(slotA < count);
-      unsigned limit = min(slot[slotA].len, slot[slotB].len);
+      unsigned limit = min(slot[slotA].keyLen, slot[slotB].keyLen);
       uint8_t *a = getKey(slotA), *b = getKey(slotB);
       unsigned i;
       for (i = 0; i < limit; i++)
@@ -463,8 +450,8 @@ struct BTreeNode : public BTreeNodeHeader {
       assert(count > 1);
       if (isInner()) {
          // we split inner nodes in the middle
-         unsigned slot = count / 2;
-         return SeparatorInfo{getFullKeyLength(slot), slot, false};
+         unsigned slotId = count / 2;
+         return SeparatorInfo{static_cast<unsigned>(prefixLength + slot[slotId].keyLen), slotId, false};
       }
 
       unsigned lower, upper;
@@ -489,10 +476,10 @@ struct BTreeNode : public BTreeNodeHeader {
 
       // truncate separator
       unsigned common = commonPrefix(bestSlot, bestSlot + 1);
-      if ((bestSlot + 1 < count) && (slot[bestSlot].len > common) && (slot[bestSlot + 1].len > common + 1)) {
+      if ((bestSlot + 1 < count) && (slot[bestSlot].keyLen > common) && (slot[bestSlot + 1].keyLen > common + 1)) {
          return SeparatorInfo{prefixLength + common + 1, bestSlot, true};
       }
-      return SeparatorInfo{getFullKeyLength(bestSlot), bestSlot, false};
+      return SeparatorInfo{static_cast<unsigned>(prefixLength + slot[bestSlot].keyLen), bestSlot, false};
    }
 
    void getSep(uint8_t* sepKeyOut, SeparatorInfo info)
@@ -526,52 +513,30 @@ struct BTree {
 
    BTree() : root(BTreeNode::makeLeaf()) {}
 
-   // point lookup: on match copies payload to payloadOut and returns the size of the payload, on failure returns -1
-   int lookup(uint8_t* key, unsigned keyLength, uint8_t* payloadOut, unsigned payloadSize)
+   // point lookup
+   uint8_t* lookup(uint8_t* key, unsigned keyLength, unsigned& payloadSizeOut)
    {
       BTreeNode* node = root;
       while (node->isInner())
          node = node->lookupInner(key, keyLength);
       bool found;
       unsigned pos = node->lowerBound(key, keyLength, found);
-      if (!found) {
-         if ((pos == node->count) && (node->upperFence.length == keyLength) && (memcmp(key, node->getUpperFenceKey(), keyLength) == 0)) {
-            // corner case: on a prefix lookup there's a small chance we are at the wrong leaf node (because the separator equals the key we're looking for)
-            uint8_t nextKey[keyLength+1]; // search for next key to find the next leaf
-            memcpy(nextKey, key, keyLength);
-            nextKey[keyLength] = 0;
-            node = root;
-            while (node->isInner())
-               node = node->lookupInner(nextKey, keyLength + 1);
-            pos = node->lowerBound(key, keyLength, found);
-            if (!found)
-               return -1;
-            // key found, continue with payload code below
-         } else
-            return -1;
-      }
+      if (!found)
+         return nullptr;
 
       // key found, copy payload
       assert(pos < node->count);
-      unsigned fullLen = node->getFullKeyLength(pos);
-      unsigned restLen = fullLen-keyLength;
-      payloadSize = min(payloadSize, fullLen-keyLength);
-      if (keyLength >= node->prefixLength) {
-         memcpy(payloadOut, node->getKey(pos) + node->getKeyLen(pos) - payloadSize, payloadSize);
-      } else {
-         uint8_t fullKey[fullLen];
-         node->copyFullKey(pos, fullKey);
-         memcpy(payloadOut, fullKey+fullLen-payloadSize, payloadSize);
-      }
-      return restLen;
+      payloadSizeOut = node->slot[pos].payloadLen;
+      return node->getPayload(pos);
    }
 
    bool lookup(uint8_t* key, unsigned keyLength)
    {
-      return lookup(key, keyLength, nullptr, 0) != -1;
+      unsigned x;
+      return lookup(key, keyLength, x) != nullptr;
    }
 
-   void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength)
+   void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength, unsigned payloadLength)
    {
       // create new root if necessary
       if (!parent) {
@@ -582,18 +547,18 @@ struct BTree {
 
       // split
       BTreeNode::SeparatorInfo sepInfo = node->findSep();
-      unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length);
+      unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length, payloadLength);
       if (parent->requestSpaceFor(spaceNeededParent)) {  // is there enough space in the parent for the separator?
          uint8_t sepKey[sepInfo.length];
          node->getSep(sepKey, sepInfo);
          node->splitNode(parent, sepInfo.slot, sepKey, sepInfo.length);
       } else {
          // must split parent first to make space for separator, restart from root to do this
-         ensureSpace(parent, spaceNeededParent, key, keyLength);
+         ensureSpace(parent, key, keyLength, payloadLength);
       }
    }
 
-   void ensureSpace(BTreeNode* toSplit, unsigned spaceNeeded, uint8_t* key, unsigned keyLength)
+   void ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, unsigned payloadLength)
    {
       BTreeNode* node = root;
       BTreeNode* parent = nullptr;
@@ -601,10 +566,10 @@ struct BTree {
          parent = node;
          node = node->lookupInner(key, keyLength);
       }
-      splitNode(toSplit, parent, key, keyLength);
+      splitNode(toSplit, parent, key, keyLength, payloadLength);
    }
 
-   void insert(uint8_t* key, unsigned keyLength)
+   void insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned payloadLength)
    {
       assert(keyLength <= BTreeNode::maxKeySize);
       BTreeNode* node = root;
@@ -613,12 +578,12 @@ struct BTree {
          parent = node;
          node = node->lookupInner(key, keyLength);
       }
-      if (node->insert(key, keyLength))
+      if (node->insert(key, keyLength, payload, payloadLength))
          return;
 
       // node is full: split and restart
-      splitNode(node, parent, key, keyLength);
-      insert(key, keyLength);
+      splitNode(node, parent, key, keyLength, payloadLength);
+      insert(key, keyLength, payload, payloadLength);
    }
 
    bool remove(uint8_t* key, unsigned keyLength)
@@ -712,12 +677,12 @@ void pr(uint8_t* s, unsigned len) {
       cout << s[i];
 }
 
-void printTree(BTreeNode* node) {
+/*void printTree(BTreeNode* node) {
    cout << (node->isLeaf?"L":"I") << " " << node << endl;
 
    if (node->isLeaf) {
       for (unsigned i=0; i<node->count; i++) {
-         cout << i << " " << node->getKeyLen(i) << " ";
+         cout << i << " " << node->getKey(i) << " ";
          pr(node->getPrefix(), node->prefixLength);
          cout << " ";
          pr(node->getKey(i), node->getKeyLen(i));
@@ -740,6 +705,7 @@ void printTree(BTreeNode* node) {
       printTree(node->getChild(i));
    printTree(node->upper);
 }
+*/
 
 void runTest(PerfEvent& e, vector<string>& data)
 {
@@ -747,14 +713,6 @@ void runTest(PerfEvent& e, vector<string>& data)
       random_shuffle(data.begin(), data.end());
    if (getenv("SORT"))
       sort(data.begin(), data.end());
-
-   // add payload
-   unsigned payloadSize = 8;
-   for (uint64_t i=0; i<data.size(); i++) {
-      string& s = data[i];
-      s.append("ABCDEDFG");
-      *(uint64_t*)(s.data() + s.size() - payloadSize) = i;
-   }
 
    BTree t;
    uint64_t count = data.size();
@@ -766,39 +724,23 @@ void runTest(PerfEvent& e, vector<string>& data)
       e.setParam("op", "insert");
       PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
-         t.insert((uint8_t*)data[i].data(), data[i].size());
+         t.insert((uint8_t*)data[i].data(), data[i].size(), reinterpret_cast<uint8_t*>(&i), sizeof(uint64_t));
 
          //for (uint64_t j=0; j<=i; j+=1) if (!t.lookup((uint8_t*)data[j].data(), data[j].size())) throw;
          //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size()-8)) throw;
       }
       printInfos(t.root);
-      printTree(t.root);
+      //printTree(t.root);
    }
 
    {
       // lookup
       e.setParam("op", "lookup");
       PerfEventBlock b(e, count);
-      for (uint64_t i = 0; i < count; i++)
-         if (!t.lookup((uint8_t*)data[i].data(), data[i].size()))
-            throw;
-   }
-
-   {
-      // lookup prefix
-      e.setParam("op", "lookup prefix");
-      PerfEventBlock b(e, count);
       for (uint64_t i = 0; i < count; i++) {
-         union {
-            uint64_t payload;
-            uint8_t payloadArray[8];
-         };
-         if (i==66) {
-            //printTree(t.root);
-            //raise(SIGTRAP);
-         }
-         int resultLen = t.lookup((uint8_t*)data[i].data(), data[i].size()-8, payloadArray, 8);
-         if (!((payload == i) || (resultLen>8)))
+         unsigned payloadSize;
+         uint8_t* payload = t.lookup((uint8_t*)data[i].data(), data[i].size(), payloadSize);
+         if (!payload || (payloadSize != sizeof(uint64_t)) || loadUnaligned<uint64_t>(payload) != i)
             throw;
       }
    }
@@ -817,10 +759,13 @@ void runTest(PerfEvent& e, vector<string>& data)
       for (uint64_t i = 0; i < count / 2 + count / 4; i++) // remove some more
          if ((i % 4 == 0) == t.remove((uint8_t*)data[i].data(), data[i].size()))
             throw;
-      for (uint64_t i = 0; i < count / 2 + count / 4; i++) // insert all
-         t.insert((uint8_t*)data[i].data(), data[i].size());
+      for (uint64_t i = 0; i < count / 2 + count / 4; i++) // insert
+         t.insert((uint8_t*)data[i].data(), data[i].size(), reinterpret_cast<uint8_t*>(&i), sizeof(uint64_t));
       for (uint64_t i = 0; i < count; i++) // remove all
          t.remove((uint8_t*)data[i].data(), data[i].size());
+      for (uint64_t i = 0; i < count; i++)
+         if (t.lookup((uint8_t*)data[i].data(), data[i].size()))
+            throw;
    }
    printInfos(t.root);
 
