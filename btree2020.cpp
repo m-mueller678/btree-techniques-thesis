@@ -156,7 +156,7 @@ struct BTreeNode : public BTreeNodeHeader {
       }
    }
 
-   // lower bound search, returns slotId, foundOut indicates if there is an exact match
+   // lower bound search, foundOut indicates if there is an exact match, returns slotId
    unsigned lowerBound(uint8_t* key, unsigned keyLength, bool& foundOut)
    {
       foundOut = false;
@@ -178,31 +178,6 @@ struct BTreeNode : public BTreeNodeHeader {
       unsigned lower = 0;
       unsigned upper = count;
       uint32_t keyHead = head(key, keyLength);
-
-      // binary search on remaining range
-      if (keyLength<4) {
-         uint32_t mask = ~0 << ((4-keyLength)*8);
-         if (keyLength == 0) // XXX
-            mask = 0;
-         while (lower < upper) {
-            unsigned mid = ((upper - lower) / 2) + lower;
-            if (keyHead < (slot[mid].head&mask)) {
-               upper = mid;
-            } else if (keyHead > (slot[mid].head&mask)) {
-               lower = mid + 1;
-            } else { // compared bytes are equal
-               if (keyLength < slot[mid].keyLen) { // key is shorter
-                  upper = mid;
-               } else if (keyLength > slot[mid].keyLen) { // key is longer
-                  lower = mid + 1;
-               } else {
-                  foundOut = true;
-                  return mid;
-               }
-            }
-         }
-         return lower;
-      }
 
       searchHint(keyHead, lower, upper);
 
