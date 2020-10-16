@@ -197,6 +197,8 @@ struct BTreeNode : public BTreeNodeHeader {
       // binary search on remaining range
       if (keyLength<4) {
          uint32_t mask = ~0 << ((4-keyLength)*8);
+         if (keyLength == 0)
+            mask = 0;
          while (lower < upper) {
             unsigned mid = ((upper - lower) / 2) + lower;
             if (keyHead < (slot[mid].head&mask)) {
@@ -524,7 +526,7 @@ struct BTree {
 
    BTree() : root(BTreeNode::makeLeaf()) {}
 
-   // point lookup, on match copies payload to payloadOut and returns the size of the payload, on failure returns -1
+   // point lookup: on match copies payload to payloadOut and returns the size of the payload, on failure returns -1
    int lookup(uint8_t* key, unsigned keyLength, uint8_t* payloadOut, unsigned payloadSize)
    {
       BTreeNode* node = root;
@@ -533,13 +535,23 @@ struct BTree {
       bool found;
       unsigned pos = node->lowerBound(key, keyLength, found);
       if (!found) {
-         if (pos < node->count)
+         if ((pos == node->count) && (node->upperFence.length == keyLength) && (memcmp(key, node->getUpperFenceKey(), keyLength) == 0)) {
+            // corner case: on a prefix lookup there's a small chance we are at the wrong leaf node (because the separator equals the key we're looking for)
+            uint8_t nextKey[keyLength+1]; // search for next key to find the next leaf
+            memcpy(nextKey, key, keyLength);
+            nextKey[keyLength] = 0;
+            node = root;
+            while (node->isInner())
+               node = node->lookupInner(nextKey, keyLength + 1);
+            pos = node->lowerBound(key, keyLength, found);
+            if (!found)
+               return -1;
+            // key found, continue with payload code below
+         } else
             return -1;
-         return -1;
-         // corner case
-         throw;
       }
 
+      // key found, copy payload
       assert(pos < node->count);
       unsigned fullLen = node->getFullKeyLength(pos);
       unsigned restLen = fullLen-keyLength;
@@ -625,7 +637,7 @@ struct BTree {
       // merge if underfull
       if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
          // find neighbor and merge
-         if (parent && (parent->count >= 2) && (pos + 1) < parent->count) {  // XXX
+         if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {  // XXX
             BTreeNode* right = parent->getChild(pos + 1);
             if (right->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
                node->mergeNodes(pos, parent, right);
@@ -705,6 +717,7 @@ void printTree(BTreeNode* node) {
 
    if (node->isLeaf) {
       for (unsigned i=0; i<node->count; i++) {
+         cout << i << " " << node->getKeyLen(i) << " ";
          pr(node->getPrefix(), node->prefixLength);
          cout << " ";
          pr(node->getKey(i), node->getKeyLen(i));
@@ -759,6 +772,7 @@ void runTest(PerfEvent& e, vector<string>& data)
          //for (uint64_t j=0; j<=i; j++) if (!t.lookup((uint8_t*)data[j].data(), data[j].size()-8)) throw;
       }
       printInfos(t.root);
+      printTree(t.root);
    }
 
    {
@@ -779,10 +793,10 @@ void runTest(PerfEvent& e, vector<string>& data)
             uint64_t payload;
             uint8_t payloadArray[8];
          };
-         //if (i==1) {
+         if (i==66) {
             //printTree(t.root);
-         //raise(SIGTRAP);
-         //}
+            //raise(SIGTRAP);
+         }
          int resultLen = t.lookup((uint8_t*)data[i].data(), data[i].size()-8, payloadArray, 8);
          if (!((payload == i) || (resultLen>8)))
             throw;
