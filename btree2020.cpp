@@ -268,7 +268,7 @@ struct BTreeNode : public BTreeNodeHeader {
          tmp.setFences(getLowerFence(), lowerFence.length, right->getUpperFence(), right->upperFence.length);
          unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
          unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
-         unsigned spaceUpperBound = // XXX
+         unsigned spaceUpperBound =
              spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t*>(slot + count + right->count) - ptr()) + leftGrow + rightGrow;
          if (spaceUpperBound > pageSize)
             return false;
@@ -416,40 +416,37 @@ struct BTreeNode : public BTreeNodeHeader {
       return i;
    }
 
-   SeparatorInfo findSep()
+   SeparatorInfo findSeparator()
    {
       assert(count > 1);
       if (isInner()) {
-         // we split inner nodes in the middle
+         // inner nodes are split in the middle
          unsigned slotId = count / 2;
          return SeparatorInfo{static_cast<unsigned>(prefixLength + slot[slotId].keyLen), slotId, false};
       }
 
-      unsigned lower, upper;
-      if (count < 4) {
-         lower = count / 2;
-         upper = lower + 1;
+      // find good separator slot
+      unsigned bestPrefixLength, bestSlot;
+      if (count > 16) {
+         unsigned lower = (count / 2) - (count / 16);
+         unsigned upper = (count / 2);
+
+         bestPrefixLength = commonPrefix(lower, 0);
+         bestSlot = lower;
+
+         if (bestPrefixLength != commonPrefix(upper - 1, 0))
+            for (bestSlot = lower + 1; (bestSlot < upper) && (commonPrefix(bestSlot, 0) == bestPrefixLength); bestSlot++)
+               ;
       } else {
-         lower = count / 2 - count / 16;
-         upper = count / 2 + count / 16;
+         bestSlot = count / 2;
+         bestPrefixLength = commonPrefix(bestSlot, 0);
       }
 
-      // find best separator
-      unsigned bestSlot = count / 2; // XXX: compare with lowerFence or with 0?, only shrinks, mid bias
-      unsigned bestPrefixLength = commonPrefix(bestSlot, 0);
-      for (unsigned i = lower; i < upper; i++) {
-         unsigned prefix = commonPrefix(i, 0);
-         if (prefix > bestPrefixLength) {
-            bestPrefixLength = prefix;
-            bestSlot = i;
-         }
-      }
-
-      // truncate separator
+      // try to truncate separator
       unsigned common = commonPrefix(bestSlot, bestSlot + 1);
-      if ((bestSlot + 1 < count) && (slot[bestSlot].keyLen > common) && (slot[bestSlot + 1].keyLen > common + 1)) {
+      if ((bestSlot + 1 < count) && (slot[bestSlot].keyLen > common) && (slot[bestSlot + 1].keyLen > (common + 1)))
          return SeparatorInfo{prefixLength + common + 1, bestSlot, true};
-      }
+
       return SeparatorInfo{static_cast<unsigned>(prefixLength + slot[bestSlot].keyLen), bestSlot, false};
    }
 
@@ -516,7 +513,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
    }
 
    // split
-   BTreeNode::SeparatorInfo sepInfo = node->findSep();
+   BTreeNode::SeparatorInfo sepInfo = node->findSeparator();
    unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length, payloadLength);
    if (parent->requestSpaceFor(spaceNeededParent)) {  // is there enough space in the parent for the separator?
       uint8_t sepKey[sepInfo.length];
@@ -572,7 +569,7 @@ bool BTree::remove(uint8_t* key, unsigned keyLength)
    // merge if underfull
    if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
       // find neighbor and merge
-      if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {  // XXX
+      if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {
          BTreeNode* right = parent->getChild(pos + 1);
          if (right->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
             node->mergeNodes(pos, parent, right);
@@ -582,5 +579,3 @@ bool BTree::remove(uint8_t* key, unsigned keyLength)
    }
    return true;
 }
-
-
