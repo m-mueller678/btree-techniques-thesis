@@ -521,7 +521,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
       node->splitNode(parent, sepInfo.slot, sepKey, sepInfo.length);
    } else {
       // must split parent first to make space for separator, restart from root to do this
-      ensureSpace(parent, key, keyLength, payloadLength);
+      ensureSpace(parent, key, keyLength, sizeof(sizeof(BTreeNode*)));
    }
 }
 
