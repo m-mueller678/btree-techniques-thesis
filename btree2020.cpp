@@ -119,7 +119,7 @@ struct BTreeNode : public BTreeNodeHeader {
    // How much space would inserting a new key of length "keyLength" require?
    unsigned spaceNeeded(unsigned keyLength, unsigned payloadLength)
    {
-      assert(keyLength >= prefixLength);
+      assert(keyLength >= prefixLength); // fence key logic makes it impossible to insert a key that is shorter than prefix
       return sizeof(Slot) + (keyLength - prefixLength) + payloadLength;
    }
 
