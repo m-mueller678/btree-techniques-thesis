@@ -374,6 +374,7 @@ struct BTreeNode : public BTreeNodeHeader {
 
    void splitNode(BTreeNode* parent, unsigned sepSlot, uint8_t* sepKey, unsigned sepLength)
    {
+      // split this node into nodeLeft and nodeRight
       assert(sepSlot > 0);
       assert(sepSlot < (pageSize / sizeof(BTreeNode*)));
       BTreeNode* nodeLeft = new BTreeNode(isLeaf);
@@ -388,6 +389,7 @@ struct BTreeNode : public BTreeNodeHeader {
          copyKeyValueRange(nodeLeft, 0, 0, sepSlot + 1);
          copyKeyValueRange(nodeRight, 0, nodeLeft->count, count - nodeLeft->count);
       } else {
+         // in inner node split, separator moves to parent (count == 1 + nodeLeft->count + nodeRight->count)
          copyKeyValueRange(nodeLeft, 0, 0, sepSlot);
          copyKeyValueRange(nodeRight, 0, nodeLeft->count + 1, count - nodeLeft->count - 1);
          nodeLeft->upper = getChild(nodeLeft->count);
