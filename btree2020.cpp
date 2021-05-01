@@ -440,7 +440,7 @@ struct BTreeNode : public BTreeNodeHeader {
             for (bestSlot = lower + 1; (bestSlot < upper) && (commonPrefix(bestSlot, 0) == bestPrefixLength); bestSlot++)
                ;
       } else {
-         bestSlot = count / 2;
+         bestSlot = (count-1) / 2;
          bestPrefixLength = commonPrefix(bestSlot, 0);
       }
 
