@@ -80,7 +80,7 @@ struct BTreeNode : public BTreeNodeHeader {
       uint8_t heap[pageSize - sizeof(BTreeNodeHeader)];                // grows from back
    };
 
-   static constexpr unsigned maxKeySize = ((pageSize - sizeof(BTreeNodeHeader) - (2 * sizeof(Slot)))) / 4;
+   static constexpr unsigned maxKVSize = ((pageSize - sizeof(BTreeNodeHeader) - (2 * sizeof(Slot)))) / 4;
 
    BTreeNode(bool isLeaf) : BTreeNodeHeader(isLeaf) {}
 
@@ -540,7 +540,7 @@ void BTree::ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, un
 
 void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned payloadLength)
 {
-   assert(keyLength <= BTreeNode::maxKeySize);
+   assert((keyLength+payloadLength) <= BTreeNode::maxKVSize);
    BTreeNode* node = root;
    BTreeNode* parent = nullptr;
    while (node->isInner()) {
