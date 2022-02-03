@@ -258,7 +258,7 @@ struct BTreeNode : public BTreeNodeHeader {
       assert(freeSpace() == should);
    }
 
-   // merge right node into this node
+   // merge "this" into "right" via "tmp"
    bool mergeNodes(unsigned slotId, BTreeNode* parent, BTreeNode* right)
    {
       if (isLeaf) {
@@ -574,8 +574,8 @@ bool BTree::remove(uint8_t* key, unsigned keyLength)
       if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {
          BTreeNode* right = parent->getChild(pos + 1);
          if (right->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
-            node->mergeNodes(pos, parent, right);
-            return true;
+            if (node->mergeNodes(pos, parent, right))
+               delete node;
          }
       }
    }
