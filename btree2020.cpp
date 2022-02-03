@@ -540,7 +540,7 @@ void BTree::ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, un
 
 void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned payloadLength)
 {
-   assert((keyLength+payloadLength) <= BTreeNode::maxKVSize);
+   assert((keyLength+min(payloadLength, sizeof(BTreeNode*))) <= BTreeNode::maxKVSize);
    BTreeNode* node = root;
    BTreeNode* parent = nullptr;
    while (node->isInner()) {
