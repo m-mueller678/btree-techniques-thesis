@@ -516,7 +516,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
 
    // split
    BTreeNode::SeparatorInfo sepInfo = node->findSeparator();
-   unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length, payloadLength);
+   unsigned spaceNeededParent = parent->spaceNeeded(sepInfo.length, sizeof(BTreeNode*));
    if (parent->requestSpaceFor(spaceNeededParent)) {  // is there enough space in the parent for the separator?
       uint8_t sepKey[sepInfo.length];
       node->getSep(sepKey, sepInfo);
