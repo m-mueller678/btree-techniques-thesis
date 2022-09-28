@@ -7,22 +7,23 @@
 
 using namespace std;
 
-void runTest(PerfEvent& e, vector<string>& data)
+void runTest(BenchmarkParameters parameters,vector<string>& data)
 {
-   if (getenv("SHUF"))
+   if (getenv("SHUF")){
+      parameters.setParam("sort","false");
       random_shuffle(data.begin(), data.end());
-   if (getenv("SORT"))
+   }
+   if (getenv("SORT")){
+      parameters.setParam("sort","true");
       sort(data.begin(), data.end());
+   }
 
    BTree t;
    uint64_t count = data.size();
-   e.setParam("type", "btr");
-   e.setParam("factr", "0");
-   e.setParam("base", "0");
    {
       // insert
-      e.setParam("op", "insert");
-      PerfEventBlock b(e, count);
+      parameters.setParam("op", "insert");
+      PerfEventBlock b(count, parameters);
       for (uint64_t i = 0; i < count; i++) {
          t.insert((uint8_t*)data[i].data(), data[i].size(), reinterpret_cast<uint8_t*>(&i), sizeof(uint64_t));
 
@@ -33,8 +34,8 @@ void runTest(PerfEvent& e, vector<string>& data)
 
    {
       // lookup
-      e.setParam("op", "lookup");
-      PerfEventBlock b(e, count);
+      parameters.setParam("op", "lookup");
+      PerfEventBlock b(count, parameters);
       for (uint64_t i = 0; i < count; i++) {
          unsigned payloadSize;
          uint8_t* payload = t.lookup((uint8_t*)data[i].data(), data[i].size(), payloadSize);
@@ -71,9 +72,8 @@ void runTest(PerfEvent& e, vector<string>& data)
 
 int main(int argc, char** argv)
 {
-   PerfEvent e;
-
    vector<string> data;
+   BenchmarkParameters parameters;
 
    if (getenv("INT")) {
       vector<uint64_t> v;
@@ -86,7 +86,9 @@ int main(int argc, char** argv)
          *(uint32_t*)(s.data()) = x;
          data.push_back(s);
       }
-      runTest(e, data);
+      parameters.setParam("sort","?");
+      parameters.setParam("bench",string("INT-") + to_string(n));
+      runTest(parameters, data);
    }
 
    if (getenv("LONG1")) {
@@ -97,7 +99,9 @@ int main(int argc, char** argv)
             s.push_back('A');
          data.push_back(s);
       }
-      runTest(e, data);
+      parameters.setParam("sort","false");
+      parameters.setParam("bench",string("LONG1-") + to_string(n));
+      runTest(parameters, data);
    }
 
    if (getenv("LONG2")) {
@@ -108,7 +112,9 @@ int main(int argc, char** argv)
             s.push_back('A' + random() % 60);
          data.push_back(s);
       }
-      runTest(e, data);
+      parameters.setParam("sort","false");
+      parameters.setParam("bench",string("LONG2-") + to_string(n));
+      runTest(parameters, data);
    }
 
    if (getenv("FILE")) {
@@ -116,7 +122,9 @@ int main(int argc, char** argv)
       string line;
       while (getline(in, line))
          data.push_back(line);
-      runTest(e, data);
+      parameters.setParam("sort","?");
+      parameters.setParam("bench",string("FILE"));
+      runTest(parameters,data);
    }
 
    return 0;
