@@ -16,7 +16,7 @@ struct BTreeNodeHeader {
       uint16_t length;
    };
 
-   BTreeNode* upper = nullptr;  // only used in inner nodes
+   BTreeNode* upper = nullptr;  // only used in inner nodes, points to last child
 
    FenceKeySlot lowerFence = {0, 0};  // exclusive
    FenceKeySlot upperFence = {0, 0};  // inclusive
@@ -510,7 +510,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
    // create new root if necessary
    if (!parent) {
       parent = BTreeNode::makeInner();
-      parent->upper = node;
+      parent->upper = node; //TODO: why?
       root = parent;
    }
 
@@ -569,7 +569,7 @@ bool BTree::remove(uint8_t* key, unsigned keyLength)
       return false;  // key not found
 
    // merge if underfull
-   if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
+   if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) { //TODO seems wrong
       // find neighbor and merge
       if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {
          BTreeNode* right = parent->getChild(pos + 1);
