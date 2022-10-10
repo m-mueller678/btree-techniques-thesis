@@ -158,6 +158,7 @@ struct BTreeNode : public BTreeNodeHeader {
    }
 
    // lower bound search, foundOut indicates if there is an exact match, returns slotId
+   // retuns greatest slot that is <= key
    unsigned lowerBound(uint8_t* key, unsigned keyLength, bool& foundOut)
    {
       foundOut = false;
@@ -569,7 +570,7 @@ bool BTree::remove(uint8_t* key, unsigned keyLength)
       return false;  // key not found
 
    // merge if underfull
-   if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) { //TODO seems wrong
+   if (node->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
       // find neighbor and merge
       if (parent && (parent->count >= 2) && ((pos + 1) < parent->count)) {
          BTreeNode* right = parent->getChild(pos + 1);
