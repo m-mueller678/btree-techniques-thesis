@@ -3,7 +3,7 @@ project(btree)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(btree test.cpp btree.cpp btree.h PerfEvent.hpp)
+add_executable(btree test.cpp btree.cpp btree.h PerfEvent.hpp BTreeNode.cpp BTreeNode.h BasicNode.cpp BasicNode.h FatSlot.h util.h)
 
 target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -Werror
