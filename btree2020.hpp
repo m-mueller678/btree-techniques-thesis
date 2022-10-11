@@ -7,8 +7,8 @@ struct BTree {
 
    BTreeNode* root;
 
-   void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength, unsigned payloadLength);
-   void ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, unsigned payloadLength);
+   void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength);
+   void ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength);
 
    public:
 

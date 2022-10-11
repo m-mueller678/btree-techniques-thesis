@@ -64,7 +64,7 @@ struct BTreeNode{
   
   static BTreeNode* makeLeaf();
   static BTreeNode* makeInner(BTreeNode* child);
-  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop = [](auto n){return false;});
+  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop = [](auto){return false;});
   unsigned spaceNeededLeaf(unsigned keyLength, unsigned payloadLength);
   unsigned spaceNeededInner(unsigned keyLength);
   bool requestSpaceFor(unsigned spaceNeeded);
@@ -90,24 +90,32 @@ class FatSlot{
     uint32_t head;
     uint8_t headBytes[4];
   } __attribute__((packed));
-public:  
-  unsigned getPayloadLen(BTreeNode* container){
+public:
+  void validate(BTreeNode* container){
     assert(ptrInPage(container,this));
+    assert(offset<=pageSize);
+    assert(keyLen<=pageSize);
+    assert(payloadLen<=pageSize);
+    assert(offset+keyLen+payloadLen <= pageSize);
+  }
+  
+  unsigned getPayloadLen(BTreeNode* container){
+    validate(container);
     return payloadLen;
   }
   
   unsigned getKeyLen(BTreeNode* container){
-    assert(ptrInPage(container,this));
+    validate(container);
     return keyLen;
   }
   
   uint8_t* getPayload(BTreeNode* container){
-    assert(ptrInPage(container,this));
+    validate(container);
     return container->ptr() + offset + keyLen;
   }
   
   uint8_t* getKey(BTreeNode* container){
-    assert(ptrInPage(container,this));
+    validate(container);
     return container->ptr() + offset;
   }
   
@@ -116,12 +124,11 @@ public:
   }
   
   void write(BTreeNode* container,uint16_t offset,uint16_t keyLen,uint16_t payloadLen, uint32_t head){
-    assert(ptrInPage(container,this));
-    assert(offset+keyLen+payloadLen<=pageSize);
     this->offset=offset;
     this->keyLen=keyLen;
     this->payloadLen=payloadLen;
     this->head=head;
+    validate(container);
   }
 };
 
@@ -157,13 +164,21 @@ struct BasicNode:BasicNodeheader{
   unsigned freeSpace() { return (ptr() + dataOffset) - reinterpret_cast<uint8_t*>(slot(count)); }
   unsigned freeSpaceAfterCompaction() { return pageSize - (reinterpret_cast<uint8_t*>(slot(count)) - ptr()) - spaceUsed; }
   
-  FatSlot* slot(unsigned slot_id){
-    return reinterpret_cast<FatSlot*>(ptr() + sizeof(BasicNode))+slot_id;
+  FatSlot* slot(unsigned slotId){
+    auto offset = sizeof(BasicNodeheader) + slotId*sizeof(FatSlot);
+    assert(offset + sizeof(FatSlot)<= pageSize);
+    return reinterpret_cast<FatSlot*>(ptr() + offset);
   }
   
   uint8_t* getLowerFence() { return ptr() + lowerFence.offset; }
   uint8_t* getUpperFence() { return ptr() + upperFence.offset; }
   uint8_t* getPrefix() { return ptr() + lowerFence.offset; }
+  
+  void validateSlots(){
+    for(unsigned i=0;i<count;++i){
+      slot(i)->validate(this);
+    }
+  }
   
   void searchHint(uint32_t keyHead, unsigned& lowerOut, unsigned& upperOut)
   {
@@ -173,12 +188,12 @@ struct BasicNode:BasicNodeheader{
       for (pos = 0; pos < hintCount; pos++)
         if (hint[pos] >= keyHead)
           break;
-        for (pos2 = pos; pos2 < hintCount; pos2++)
-          if (hint[pos2] != keyHead)
-            break;
-          lowerOut = pos * dist;
-        if (pos2 < hintCount)
-          upperOut = (pos2 + 1) * dist;
+      for (pos2 = pos; pos2 < hintCount; pos2++)
+        if (hint[pos2] != keyHead)
+          break;
+      lowerOut = pos * dist;
+      if (pos2 < hintCount)
+        upperOut = (pos2 + 1) * dist;
     }
   }
   
@@ -207,11 +222,13 @@ struct BasicNode:BasicNodeheader{
         copyKeyValue(srcSlot + i, dst, dstSlot + i);
     }
     dst->count += srcCount;
+    dst->validateSlots();
     assert((dst->ptr() + dst->dataOffset) >= reinterpret_cast<uint8_t*>(dst->slot(dst->count)));
   }
   
   void copyKeyValue(uint16_t srcSlot, BasicNode* dst, uint16_t dstSlot)
   {
+    assert(dst!=this);
     unsigned fullLength = slot(srcSlot)->getKeyLen(this) + prefixLength;
     uint8_t key[fullLength];
     memcpy(key, getPrefix(), prefixLength);
@@ -231,6 +248,7 @@ struct BasicNode:BasicNodeheader{
     assert(reinterpret_cast<uint8_t*>(slot(count))<=reinterpret_cast<uint8_t*>(slot(slotId)->getKey(this)));
     memcpy(slot(slotId)->getKey(this), key, keyLength);
     memcpy(slot(slotId)->getPayload(this), payload, payloadLength);
+    validateSlots();
   }
   
   void makeHint()
@@ -248,6 +266,7 @@ struct BasicNode:BasicNodeheader{
     copyKeyValueRange(&tmp, 0, 0, count);
     tmp.upper = upper;
     memcpy(reinterpret_cast<char*>(this), &tmp, sizeof(BasicNode));
+    validateSlots();
     makeHint();
     assert(freeSpace() == should);
   }
@@ -257,13 +276,13 @@ struct BasicNode:BasicNodeheader{
     foundOut = false;
     
     // check prefix
-    int cmp = memcmp(key, ptr() + sizeof(BasicNode), min(keyLength, prefixLength));
+    int cmp = memcmp(key,getPrefix(), min(keyLength, prefixLength));
     if (cmp < 0) // key is less than prefix
-      return 0;
+      assert(false);//return 0;
     if (cmp > 0) // key is greater than prefix
-      return count;
+      assert(false);//return count;
     if (keyLength < prefixLength) // key is equal but shorter than prefix
-      return 0;
+      assert(false);//return 0;
     key += prefixLength;
     keyLength -= prefixLength;
     
@@ -346,7 +365,7 @@ struct BasicNode:BasicNodeheader{
     for (i = 0; i < limit; i++)
       if (a[i] != b[i])
         break;
-      return i;
+    return i;
   }
   
   struct SeparatorInfo {
@@ -398,6 +417,9 @@ struct BasicNode:BasicNodeheader{
   BTreeNode* getChild(unsigned slotId)
   {
     assert(isInner());
+    assert(slotId<=count);
+    if(slotId == count)
+      return upper;
     return loadUnaligned<BTreeNode*>(slot(slotId)->getPayload(this));
   }
   
@@ -407,9 +429,12 @@ struct BasicNode:BasicNodeheader{
       return false;  // no space, insert fails
     bool found;
     unsigned slotId = lowerBound(key, keyLength,found);
+    assert(slotId<=count);
     memmove(slot(slotId + 1), slot(slotId), sizeof(FatSlot) * (count - slotId));
-    storeKeyValue(slotId, key, keyLength, payload, payloadLength);
+    assert(count < pageSize);
     count++;
+    storeKeyValue(slotId, key, keyLength, payload, payloadLength);
+    validateSlots();
     updateHint(slotId);
     return true;
   }
@@ -438,13 +463,23 @@ BTreeNode* BTreeNode::makeLeaf(){
 }
 
 BTreeNode* BTreeNode::makeInner(BTreeNode* child){
-  return reinterpret_cast<BTreeNode*>(new BasicNode(false));
+  auto node = new BasicNode(false);
+  node->upper = child;
+  return reinterpret_cast<BTreeNode*>(node);
 }
 
-BTreeNode* BTreeNode::descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop){
+BTreeNode* BTreeNode::descend(BTreeNode*& tagNode,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop){
   BTreeNode* parent=nullptr;
-  while(node->isInner() && !early_stop(node)){
-    switch(node->tag){
+  while(tagNode->isInner() && !early_stop(tagNode)){
+    switch(tagNode->tag){
+      case TAG_BASIC_INNER:{
+        auto node=reinterpret_cast<BasicNode*>(tagNode);
+        bool found;
+        unsigned pos = node->lowerBound(key, keyLen, found);
+        parent=tagNode;
+        tagNode = node->getChild(pos);
+        break;
+      }
       default:assert(false);
     }
   }
@@ -489,12 +524,17 @@ void BTreeNode::destroy(){
 bool BTreeNode::insertInner(uint8_t* key, unsigned keyLength, BTreeNode* child)
 {
   switch(tag){
+    case TAG_BASIC_INNER:
+      return reinterpret_cast<BasicNode*>(this)->insert(key,keyLength,reinterpret_cast<uint8_t*>(&child),sizeof(child));
     default: assert(false);
   }
 }
 
 bool BTreeNode::splitNode(BTreeNode* parent){
   switch(tag){
+    case TAG_BASIC_INNER:
+    case TAG_BASIC_LEAF:
+      return reinterpret_cast<BasicNode*>(this)->splitNode(parent);
     default: assert(false);
   }
 }
@@ -533,7 +573,7 @@ bool BasicNode::splitNode(BTreeNode* parent)
   }
   nodeLeft->makeHint();
   nodeRight->makeHint();
-  memcpy(reinterpret_cast<char*>(this), nodeRight, sizeof(BTreeNode));
+  memcpy(reinterpret_cast<char*>(this), nodeRight, sizeof(BasicNode));
   return true;
 }
 
@@ -544,6 +584,12 @@ BTree::~BTree() { root->destroy(); }
 // point lookup
 uint8_t* BTree::lookup(uint8_t* key, unsigned keyLength, unsigned& payloadSizeOut)
 {
+  if(root->tag ==TAG_BASIC_INNER){ //TODO
+    auto rootb=reinterpret_cast<BasicNode*>(root);
+    auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
+    assert( child->lowerFence.length == 0 );
+  }
+  
   BTreeNode* tagNode=root;
   BTreeNode::descend(tagNode,key,keyLength);
   switch (tagNode->tag){
@@ -566,15 +612,15 @@ bool BTree::lookup(uint8_t* key, unsigned keyLength)
   return lookup(key, keyLength, x) != nullptr;
 }
 
-void BTree::ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, unsigned payloadLength)
+void BTree::ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength)
 {
   BTreeNode* node = root;
   auto parent = BTreeNode::descend(node,key,keyLength,[=](auto n){return n==toSplit;});
   assert(node==toSplit);
-  splitNode(toSplit, parent, key, keyLength, payloadLength);
+  splitNode(toSplit, parent, key,keyLength);
 }
 
-void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength, unsigned payloadLength)
+void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength)
 {
   // create new root if necessary
   if (!parent) {
@@ -583,7 +629,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
   }
   if (!node->splitNode(parent)) {
     // must split parent first to make space for separator, restart from root to do this
-    ensureSpace(parent, key, keyLength, sizeof(sizeof(BTreeNode*)));
+    ensureSpace(parent, key, keyLength);
   }
 }
 
@@ -595,11 +641,22 @@ void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned 
   switch(tagNode->tag){
     case TAG_BASIC_LEAF:{
       auto node =reinterpret_cast<BasicNode*>(tagNode);
-      if (node->insert(key, keyLength, payload, payloadLength))
+      if (node->insert(key, keyLength, payload, payloadLength)){
+        if(root->tag ==TAG_BASIC_INNER){ //TODO
+          auto rootb=reinterpret_cast<BasicNode*>(root);
+          auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
+          assert( child->lowerFence.length == 0 );
+        }
         return;
+      }
       // node is full: split and restart
-      splitNode(tagNode, parent, key, keyLength, payloadLength);
+      splitNode(tagNode, parent, key, keyLength);
       insert(key, keyLength, payload, payloadLength);
+      if(root->tag ==TAG_BASIC_INNER){ //TODO
+        auto rootb=reinterpret_cast<BasicNode*>(root);
+        auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
+        assert( child->lowerFence.length == 0 );
+      }
       return;
     }
     default:assert(false);
@@ -609,4 +666,6 @@ void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned 
 bool BTree::remove(uint8_t* key, unsigned keyLength)
 {
   assert(false);
+  assert(key);
+  assert(keyLength);
 }

@@ -70,7 +70,7 @@ void runTest(BenchmarkParameters parameters,vector<string>& data)
    data.clear();
 }
 
-int main(int argc, char** argv)
+int main()
 {
    vector<string> data;
    BenchmarkParameters parameters;
