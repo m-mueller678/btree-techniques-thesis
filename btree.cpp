@@ -64,13 +64,19 @@ struct BTreeNode{
   
   static BTreeNode* makeLeaf();
   static BTreeNode* makeInner(BTreeNode* child);
-  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop = [](auto){return false;});
+  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,unsigned& outPos,std::function<bool(BTreeNode*)> early_stop = [](auto){return false;});
   unsigned spaceNeededLeaf(unsigned keyLength, unsigned payloadLength);
   unsigned spaceNeededInner(unsigned keyLength);
   bool requestSpaceFor(unsigned spaceNeeded);
   void destroy();
   bool insertInner(uint8_t* key, unsigned keyLength, BTreeNode* child);
   bool splitNode(BTreeNode* parent);
+  
+  bool remove(uint8_t* key,unsigned keyLength);
+  bool isUnderfull();
+  // merges adjacent children if appropriate
+  bool mergeChildrenCheck(unsigned firstChild);
+  std::tuple<bool,BTreeNode*> copyTo(BTreeNode* dest);
 };
 
 struct BasicNode;
@@ -456,6 +462,25 @@ struct BasicNode:BasicNodeheader{
       getChild(i)->destroy();
     upper->destroy();
   }
+  
+  bool removeSlot(unsigned slotId)
+  {
+    spaceUsed -= slot(slotId)->getKeyLen(this);
+    spaceUsed -= slot(slotId)->getPayloadLen(this);
+    memmove(slot(slotId),slot(slotId+1), sizeof(FatSlot) * (count - slotId - 1));
+    count--;
+    validateSlots();
+    makeHint();
+    return true;
+  }
+  
+  bool remove(uint8_t* key,unsigned keyLen){
+    bool found;
+    unsigned slotId = lowerBound(key, keyLen, found);
+    if (!found)
+      return false;
+    return removeSlot(slotId);
+  }
 };
  
 BTreeNode* BTreeNode::makeLeaf(){
@@ -468,16 +493,16 @@ BTreeNode* BTreeNode::makeInner(BTreeNode* child){
   return reinterpret_cast<BTreeNode*>(node);
 }
 
-BTreeNode* BTreeNode::descend(BTreeNode*& tagNode,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop){
+BTreeNode* BTreeNode::descend(BTreeNode*& tagNode,uint8_t* key,unsigned keyLen,unsigned& outPos,std::function<bool(BTreeNode*)> early_stop){
   BTreeNode* parent=nullptr;
   while(tagNode->isInner() && !early_stop(tagNode)){
     switch(tagNode->tag){
       case TAG_BASIC_INNER:{
         auto node=reinterpret_cast<BasicNode*>(tagNode);
         bool found;
-        unsigned pos = node->lowerBound(key, keyLen, found);
+        outPos = node->lowerBound(key, keyLen, found);
         parent=tagNode;
-        tagNode = node->getChild(pos);
+        tagNode = node->getChild(outPos);
         break;
       }
       default:assert(false);
@@ -539,6 +564,31 @@ bool BTreeNode::splitNode(BTreeNode* parent){
   }
 }
 
+bool BTreeNode::isUnderfull(){
+  switch(tag){
+    case TAG_BASIC_INNER:
+    case TAG_BASIC_LEAF:{
+      auto node =reinterpret_cast<BasicNode*>(this);
+      return node->freeSpaceAfterCompaction() >= pageSize*3/4;
+    }
+    default: assert(false);
+  }
+}
+
+bool BTreeNode::remove(uint8_t* key,unsigned keyLen){
+  switch(tag){
+    case TAG_BASIC_INNER:
+    case TAG_BASIC_LEAF:
+      return reinterpret_cast<BasicNode*>(this)->remove(key,keyLen);
+    default: assert(false);
+  }
+}
+
+bool BTreeNode::mergeChildrenCheck(unsigned){
+  return false; // TODO perform merge
+}
+
+
 bool BasicNode::splitNode(BTreeNode* parent)
 {
   // split
@@ -584,14 +634,9 @@ BTree::~BTree() { root->destroy(); }
 // point lookup
 uint8_t* BTree::lookup(uint8_t* key, unsigned keyLength, unsigned& payloadSizeOut)
 {
-  if(root->tag ==TAG_BASIC_INNER){ //TODO
-    auto rootb=reinterpret_cast<BasicNode*>(root);
-    auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
-    assert( child->lowerFence.length == 0 );
-  }
-  
   BTreeNode* tagNode=root;
-  BTreeNode::descend(tagNode,key,keyLength);
+  unsigned outPos=0;
+  BTreeNode::descend(tagNode,key,keyLength,outPos);
   switch (tagNode->tag){
     case TAG_BASIC_LEAF:{
       auto node = reinterpret_cast<BasicNode*>(tagNode);
@@ -615,7 +660,8 @@ bool BTree::lookup(uint8_t* key, unsigned keyLength)
 void BTree::ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength)
 {
   BTreeNode* node = root;
-  auto parent = BTreeNode::descend(node,key,keyLength,[=](auto n){return n==toSplit;});
+  unsigned outPos=0;
+  auto parent = BTreeNode::descend(node,key,keyLength,outPos,[=](auto n){return n==toSplit;});
   assert(node==toSplit);
   splitNode(toSplit, parent, key,keyLength);
 }
@@ -637,26 +683,17 @@ void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned 
 {
   assert((keyLength+payloadLength) <= maxKVSize);
   BTreeNode* tagNode = root;
-  BTreeNode* parent = BTreeNode::descend(tagNode,key,keyLength);
+  unsigned outPos=0;
+  BTreeNode* parent = BTreeNode::descend(tagNode,key,keyLength,outPos);
   switch(tagNode->tag){
     case TAG_BASIC_LEAF:{
       auto node =reinterpret_cast<BasicNode*>(tagNode);
       if (node->insert(key, keyLength, payload, payloadLength)){
-        if(root->tag ==TAG_BASIC_INNER){ //TODO
-          auto rootb=reinterpret_cast<BasicNode*>(root);
-          auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
-          assert( child->lowerFence.length == 0 );
-        }
         return;
       }
       // node is full: split and restart
       splitNode(tagNode, parent, key, keyLength);
       insert(key, keyLength, payload, payloadLength);
-      if(root->tag ==TAG_BASIC_INNER){ //TODO
-        auto rootb=reinterpret_cast<BasicNode*>(root);
-        auto child = reinterpret_cast<BasicNode*>(rootb->getChild(0));
-        assert( child->lowerFence.length == 0 );
-      }
       return;
     }
     default:assert(false);
@@ -665,7 +702,23 @@ void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned 
 
 bool BTree::remove(uint8_t* key, unsigned keyLength)
 {
-  assert(false);
-  assert(key);
-  assert(keyLength);
+  BTreeNode* mergeTarget=nullptr;
+continueMerge:
+  BTreeNode* node = root;
+  unsigned pos=0;
+  BTreeNode* parent = BTreeNode::descend(node,key,keyLength,pos,[=](auto n){return n==mergeTarget;});
+  if(mergeTarget==nullptr){
+    if (!node->remove(key, keyLength))
+      return false;// key not found
+    if (node->isUnderfull())
+      mergeTarget=node;
+    else
+      return true;
+  }
+  assert(mergeTarget==node);
+  if(parent->mergeChildrenCheck(pos) && parent->isUnderfull() && parent!=root){
+    mergeTarget=parent;
+    goto continueMerge;
+  }
+  return true;
 }
