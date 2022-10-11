@@ -3,3 +3,6 @@
 /cov.profraw
 /cov.profdata
 btree-debug
+/.idea
+/cmake-build-debug/
+/cmake-build-release/
