@@ -1,14 +1,11 @@
 #pragma once
 
-struct BTreeNode;
+union BTreeNode;
 
 struct BTree {
    private:
 
    BTreeNode* root;
-
-   void splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned keyLength, unsigned payloadLength);
-   void ensureSpace(BTreeNode* toSplit, uint8_t* key, unsigned keyLength, unsigned payloadLength);
 
    public:
 

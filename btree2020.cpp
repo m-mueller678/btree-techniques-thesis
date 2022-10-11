@@ -65,7 +65,7 @@ static uint32_t head(uint8_t* key, unsigned keyLength)
    }
 }
 
-struct BTreeNode : public BTreeNodeHeader {
+class BTreeNode : public BTreeNodeHeader {
    struct Slot {
       uint16_t offset;
       uint16_t keyLen;
@@ -365,6 +365,7 @@ struct BTreeNode : public BTreeNodeHeader {
       memcpy(ptr() + dataOffset, key, keyLength);
    }
 
+private:
    void setFences(uint8_t* lowerKey, unsigned lowerLen, uint8_t* upperKey, unsigned upperLen)
    {
       insertFence(lowerFence, lowerKey, lowerLen);
@@ -511,7 +512,7 @@ void BTree::splitNode(BTreeNode* node, BTreeNode* parent, uint8_t* key, unsigned
    // create new root if necessary
    if (!parent) {
       parent = BTreeNode::makeInner();
-      parent->upper = node; //TODO: why?
+      parent->upper = node;
       root = parent;
    }
 
