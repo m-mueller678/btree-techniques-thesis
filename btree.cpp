@@ -40,9 +40,10 @@ static uint32_t head(uint8_t* key, unsigned keyLength)
 static constexpr unsigned pageSize = 4096;
 static constexpr unsigned maxKVSize = pageSize / 4;
 
-constexpr uint8_t TAG_SORTED_LEAF=0;
+constexpr uint8_t TAG_BASIC_LEAF=0;
+constexpr uint8_t TAG_BASIC_INNER=1;
 
-struct BTreeNodeTagHeader{
+struct BTreeNode{
   uint8_t tag;
   
   uint8_t* ptr(){
@@ -51,7 +52,8 @@ struct BTreeNodeTagHeader{
   
   bool isLeaf(){
     switch(tag){
-      case TAG_SORTED_LEAF: return true;
+      case TAG_BASIC_LEAF: return true;
+      case TAG_BASIC_INNER: return false;
       default:assert(false);
     }
   }
@@ -59,10 +61,22 @@ struct BTreeNodeTagHeader{
   bool isInner(){
     return !isLeaf();
   }
+  
+  static BTreeNode* makeLeaf();
+  static BTreeNode* makeInner(BTreeNode* child);
+  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop = [](auto n){return false;});
+  unsigned spaceNeededLeaf(unsigned keyLength, unsigned payloadLength);
+  unsigned spaceNeededInner(unsigned keyLength);
+  bool requestSpaceFor(unsigned spaceNeeded);
+  void destroy();
+  bool insertInner(uint8_t* key, unsigned keyLength, BTreeNode* child);
+  bool splitNode(BTreeNode* parent);
 };
 
+struct BasicNode;
+
 template<class T>
-bool ptrInPage(BTreeNodeTagHeader* page, T* ptr){
+bool ptrInPage(BTreeNode* page, T* ptr){
   auto p1 = reinterpret_cast<intptr_t>(page);
   auto p2 = reinterpret_cast<intptr_t>(ptr);
   return p1<=p2 && (p2<p1+pageSize);
@@ -77,22 +91,22 @@ class FatSlot{
     uint8_t headBytes[4];
   } __attribute__((packed));
 public:  
-  unsigned getPayloadLen(BTreeNodeTagHeader* container){
+  unsigned getPayloadLen(BTreeNode* container){
     assert(ptrInPage(container,this));
     return payloadLen;
   }
   
-  unsigned getKeyLen(BTreeNodeTagHeader* container){
+  unsigned getKeyLen(BTreeNode* container){
     assert(ptrInPage(container,this));
     return keyLen;
   }
   
-  uint8_t* getPayload(BTreeNodeTagHeader* container){
+  uint8_t* getPayload(BTreeNode* container){
     assert(ptrInPage(container,this));
     return container->ptr() + offset + keyLen;
   }
   
-  uint8_t* getKey(BTreeNodeTagHeader* container){
+  uint8_t* getKey(BTreeNode* container){
     assert(ptrInPage(container,this));
     return container->ptr() + offset;
   }
@@ -101,7 +115,7 @@ public:
     return head;
   }
   
-  void write(BTreeNodeTagHeader* container,uint16_t offset,uint16_t keyLen,uint16_t payloadLen, uint32_t head){
+  void write(BTreeNode* container,uint16_t offset,uint16_t keyLen,uint16_t payloadLen, uint32_t head){
     assert(ptrInPage(container,this));
     assert(offset+keyLen+payloadLen<=pageSize);
     this->offset=offset;
@@ -111,7 +125,7 @@ public:
   }
 };
 
-struct SortedLeafNodeheader:BTreeNodeTagHeader{
+struct BasicNodeheader:BTreeNode{
   BTreeNode* upper = nullptr;  // only used in inner nodes, points to last child
   
   struct FenceKeySlot {
@@ -130,18 +144,21 @@ struct SortedLeafNodeheader:BTreeNodeTagHeader{
   uint32_t hint[hintCount];
 };
 
-struct SortedLeafNode:SortedLeafNodeheader{
-  uint8_t data[pageSize - sizeof(SortedLeafNodeheader)];
+struct BasicNode:BasicNodeheader{
+  uint8_t data[pageSize - sizeof(BasicNodeheader)];
   
-  SortedLeafNode(){
-    tag=TAG_SORTED_LEAF;
+  BasicNode(bool leaf){
+    if(leaf)
+      tag=TAG_BASIC_LEAF;
+    else
+      tag=TAG_BASIC_INNER;
   }
   
   unsigned freeSpace() { return (ptr() + dataOffset) - reinterpret_cast<uint8_t*>(slot(count)); }
   unsigned freeSpaceAfterCompaction() { return pageSize - (reinterpret_cast<uint8_t*>(slot(count)) - ptr()) - spaceUsed; }
   
   FatSlot* slot(unsigned slot_id){
-    return reinterpret_cast<FatSlot*>(ptr() + sizeof(SortedLeafNode))+slot_id;
+    return reinterpret_cast<FatSlot*>(ptr() + sizeof(BasicNode))+slot_id;
   }
   
   uint8_t* getLowerFence() { return ptr() + lowerFence.offset; }
@@ -165,7 +182,7 @@ struct SortedLeafNode:SortedLeafNodeheader{
     }
   }
   
-  void copyKeyValueRange(SortedLeafNode* dst, uint16_t dstSlot, uint16_t srcSlot, unsigned srcCount)
+  void copyKeyValueRange(BasicNode* dst, uint16_t dstSlot, uint16_t srcSlot, unsigned srcCount)
   {
     if (prefixLength <= dst->prefixLength) {  // prefix grows
       unsigned diff = dst->prefixLength - prefixLength;
@@ -193,7 +210,7 @@ struct SortedLeafNode:SortedLeafNodeheader{
     assert((dst->ptr() + dst->dataOffset) >= reinterpret_cast<uint8_t*>(dst->slot(dst->count)));
   }
   
-  void copyKeyValue(uint16_t srcSlot, SortedLeafNode* dst, uint16_t dstSlot)
+  void copyKeyValue(uint16_t srcSlot, BasicNode* dst, uint16_t dstSlot)
   {
     unsigned fullLength = slot(srcSlot)->getKeyLen(this) + prefixLength;
     uint8_t key[fullLength];
@@ -226,11 +243,11 @@ struct SortedLeafNode:SortedLeafNodeheader{
   void compactify()
   {
     unsigned should = freeSpaceAfterCompaction();
-    SortedLeafNode tmp{};
+    BasicNode tmp(isLeaf());
     tmp.setFences(getLowerFence(), lowerFence.length, getUpperFence(), upperFence.length);
     copyKeyValueRange(&tmp, 0, 0, count);
     tmp.upper = upper;
-    memcpy(reinterpret_cast<char*>(this), &tmp, sizeof(SortedLeafNode));
+    memcpy(reinterpret_cast<char*>(this), &tmp, sizeof(BasicNode));
     makeHint();
     assert(freeSpace() == should);
   }
@@ -240,7 +257,7 @@ struct SortedLeafNode:SortedLeafNodeheader{
     foundOut = false;
     
     // check prefix
-    int cmp = memcmp(key, ptr() + sizeof(SortedLeafNode), min(keyLength, prefixLength));
+    int cmp = memcmp(key, ptr() + sizeof(BasicNode), min(keyLength, prefixLength));
     if (cmp < 0) // key is less than prefix
       return 0;
     if (cmp > 0) // key is greater than prefix
@@ -408,80 +425,84 @@ struct SortedLeafNode:SortedLeafNodeheader{
   }
   
   bool splitNode(BTreeNode* parent);
-};
-
-union BTreeNode{
-  uint8_t tag;
-  SortedLeafNode sorted_leaf;
-  BTreeNodeTagHeader tagNode;
   
-  static BTreeNode* makeLeaf(){
-    return reinterpret_cast<BTreeNode*>(new SortedLeafNode());
-  }
-  
-  static BTreeNode* makeInner(BTreeNode* child){
-    assert(false);
-  }
-  
-  static BTreeNode* descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop = [](auto n){return false;}){
-    BTreeNode* parent=nullptr;
-    while(node->tagNode.isInner() && !early_stop(node)){
-      switch(node->tag){
-        default:assert(false);
-      }
-    }
-    return parent;
-  }
-  
-  // How much space would inserting a new key of length "keyLength" require?
-  unsigned spaceNeeded(unsigned keyLength, unsigned payloadLength)
-  {
-    switch(tag){
-      case TAG_SORTED_LEAF: return reinterpret_cast<SortedLeafNode*>(this)->spaceNeeded(keyLength,payloadLength);
-      default:assert(false);
-    }
-  }
-  
-  unsigned spaceNeededInner(unsigned keyLength){
-    switch(tag){
-      default:assert(false);
-    }
-  }
-  
-  bool requestSpaceFor(unsigned spaceNeeded)
-  {
-    switch(tag){
-      case TAG_SORTED_LEAF: return reinterpret_cast<SortedLeafNode*>(this)->requestSpaceFor(spaceNeeded);
-      default:assert(false);
-    }
-  }
-  
-  void destroy(){
-    switch(tag){
-      case TAG_SORTED_LEAF: return;
-      default: assert(false);
-    }
-    free(this);
-  }
-  
-  bool insertInner(uint8_t* key, unsigned keyLength, BTreeNode* child)
-  {
-    switch(tag){
-      default: assert(false);
-    }
-  }
-  
-  bool splitNode(BTreeNode* parent){
-    switch(tag){
-      default: assert(false);
-    }
+  void destroyInner(){
+    for (unsigned i = 0; i < count; i++)
+      getChild(i)->destroy();
+    upper->destroy();
   }
 };
+ 
+BTreeNode* BTreeNode::makeLeaf(){
+  return reinterpret_cast<BTreeNode*>(new BasicNode(true));
+}
 
-bool SortedLeafNode::splitNode(BTreeNode* parent)
+BTreeNode* BTreeNode::makeInner(BTreeNode* child){
+  return reinterpret_cast<BTreeNode*>(new BasicNode(false));
+}
+
+BTreeNode* BTreeNode::descend(BTreeNode*& node,uint8_t* key,unsigned keyLen,std::function<bool(BTreeNode*)> early_stop){
+  BTreeNode* parent=nullptr;
+  while(node->isInner() && !early_stop(node)){
+    switch(node->tag){
+      default:assert(false);
+    }
+  }
+  return parent;
+}
+
+// How much space would inserting a new key of length "keyLength" require?
+unsigned BTreeNode::spaceNeededLeaf(unsigned keyLength, unsigned payloadLength)
+{
+  switch(tag){
+    case TAG_BASIC_LEAF: return reinterpret_cast<BasicNode*>(this)->spaceNeeded(keyLength,payloadLength);
+    default:assert(false);
+  }
+}
+
+unsigned BTreeNode::spaceNeededInner(unsigned keyLength){
+  switch(tag){
+    case TAG_BASIC_INNER: return reinterpret_cast<BasicNode*>(this)->spaceNeeded(keyLength,sizeof(void*));
+    default:assert(false);
+  }
+}
+
+bool BTreeNode::requestSpaceFor(unsigned spaceNeeded)
+{
+  switch(tag){
+    case TAG_BASIC_INNER:
+    case TAG_BASIC_LEAF:
+      return reinterpret_cast<BasicNode*>(this)->requestSpaceFor(spaceNeeded);
+    default:assert(false);
+  }
+}
+
+void BTreeNode::destroy(){
+  switch(tag){
+    case TAG_BASIC_INNER: reinterpret_cast<BasicNode*>(this)->destroyInner();
+    case TAG_BASIC_LEAF: return;
+    default: assert(false);
+  }
+  delete this;
+}
+
+bool BTreeNode::insertInner(uint8_t* key, unsigned keyLength, BTreeNode* child)
+{
+  switch(tag){
+    default: assert(false);
+  }
+}
+
+bool BTreeNode::splitNode(BTreeNode* parent){
+  switch(tag){
+    default: assert(false);
+  }
+}
+
+bool BasicNode::splitNode(BTreeNode* parent)
 {
   // split
-  SortedLeafNode::SeparatorInfo sepInfo = findSeparator();
+  BasicNode::SeparatorInfo sepInfo = findSeparator();
   unsigned spaceNeededParent = parent->spaceNeededInner(sepInfo.length);
   if (!parent->requestSpaceFor(spaceNeededParent)) {  // is there enough space in the parent for the separator?
     return false;
@@ -492,10 +513,10 @@ bool SortedLeafNode::splitNode(BTreeNode* parent)
   // split this node into nodeLeft and nodeRight
   assert(sepInfo.slot > 0);
   assert(sepInfo.slot  < count);
-  SortedLeafNode* nodeLeft = new SortedLeafNode();
+  BasicNode* nodeLeft = new BasicNode(isLeaf());
   nodeLeft->setFences(getLowerFence(), lowerFence.length, sepKey, sepInfo.length);
-  SortedLeafNode tmp{};
-  SortedLeafNode* nodeRight = &tmp;
+  BasicNode tmp(isLeaf());
+  BasicNode* nodeRight = &tmp;
   nodeRight->setFences(sepKey, sepInfo.length, getUpperFence(), upperFence.length);
   bool succ = parent->insertInner(sepKey, sepInfo.length, reinterpret_cast<BTreeNode*>(nodeLeft) );
   static_cast<void>(succ);
@@ -526,8 +547,8 @@ uint8_t* BTree::lookup(uint8_t* key, unsigned keyLength, unsigned& payloadSizeOu
   BTreeNode* tagNode=root;
   BTreeNode::descend(tagNode,key,keyLength);
   switch (tagNode->tag){
-    case TAG_SORTED_LEAF:{
-      auto node = reinterpret_cast<SortedLeafNode*>(tagNode);
+    case TAG_BASIC_LEAF:{
+      auto node = reinterpret_cast<BasicNode*>(tagNode);
       bool found;
       unsigned pos = node->lowerBound(key, keyLength, found);
       if (!found)
@@ -572,8 +593,8 @@ void BTree::insert(uint8_t* key, unsigned keyLength, uint8_t* payload, unsigned 
   BTreeNode* tagNode = root;
   BTreeNode* parent = BTreeNode::descend(tagNode,key,keyLength);
   switch(tagNode->tag){
-    case TAG_SORTED_LEAF:{
-      auto node =reinterpret_cast<SortedLeafNode*>(tagNode);
+    case TAG_BASIC_LEAF:{
+      auto node =reinterpret_cast<BasicNode*>(tagNode);
       if (node->insert(key, keyLength, payload, payloadLength))
         return;
       // node is full: split and restart

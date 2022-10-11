@@ -1,6 +1,6 @@
 #pragma once
 
-union BTreeNode;
+struct BTreeNode;
 
 struct BTree {
    private:
