@@ -51,9 +51,9 @@ bool BasicNode::splitNode(BTreeNode *parent) {
 
 BasicNode::BasicNode(bool leaf) {
     if (leaf)
-        tag = TAG_BASIC_LEAF;
+        tag = BasicLeaf;
     else
-        tag = TAG_BASIC_INNER;
+        tag = BasicInner;
 }
 
 unsigned BasicNode::freeSpace() { return (ptr() + dataOffset) - reinterpret_cast<uint8_t *>(slot(count)); }

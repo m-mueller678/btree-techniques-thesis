@@ -24,7 +24,7 @@ BTreeNode *BTreeNode::descend(BTreeNode *&tagNode, uint8_t *key, unsigned keyLen
     BTreeNode *parent = nullptr;
     while (tagNode->isInner() && !early_stop(tagNode)) {
         switch (tagNode->tag) {
-            case TAG_BASIC_INNER: {
+            case BasicInner: {
                 auto node = reinterpret_cast<BasicNode *>(tagNode);
                 bool found;
                 outPos = node->lowerBound(key, keyLen, found);
@@ -32,7 +32,7 @@ BTreeNode *BTreeNode::descend(BTreeNode *&tagNode, uint8_t *key, unsigned keyLen
                 tagNode = node->getChild(outPos);
                 break;
             }
-            default:
+            case BasicLeaf:
                 throw;
         }
     }
@@ -42,83 +42,73 @@ BTreeNode *BTreeNode::descend(BTreeNode *&tagNode, uint8_t *key, unsigned keyLen
 // How much space would inserting a new key of length "keyLength" require?
 unsigned BTreeNode::spaceNeededLeaf(unsigned keyLength, unsigned payloadLength) {
     switch (tag) {
-        case TAG_BASIC_LEAF:
+        case BasicLeaf:
             return reinterpret_cast<BasicNode *>(this)->spaceNeeded(keyLength, payloadLength);
-        default:
+        case BasicInner:
             throw;
     }
 }
 
 unsigned BTreeNode::spaceNeededInner(unsigned keyLength) {
     switch (tag) {
-        case TAG_BASIC_INNER:
+        case BasicInner:
             return reinterpret_cast<BasicNode *>(this)->spaceNeeded(keyLength, sizeof(void *));
-        default:
+        case BasicLeaf:
             throw;
     }
 }
 
 bool BTreeNode::requestSpaceFor(unsigned spaceNeeded) {
     switch (tag) {
-        case TAG_BASIC_INNER:
-        case TAG_BASIC_LEAF:
+        case BasicInner:
+        case BasicLeaf:
             return reinterpret_cast<BasicNode *>(this)->requestSpaceFor(spaceNeeded);
-        default:
-            throw;
     }
 }
 
 void BTreeNode::destroy() {
     switch (tag) {
-        case TAG_BASIC_INNER:
+        case BasicInner:
             reinterpret_cast<BasicNode *>(this)->destroyInner();
-        case TAG_BASIC_LEAF:
+        case BasicLeaf:
             return;
-        default:
-            throw;
     }
     delete this;
 }
 
 bool BTreeNode::insertInner(uint8_t *key, unsigned keyLength, BTreeNode *child) {
     switch (tag) {
-        case TAG_BASIC_INNER:
+        case BasicInner:
             return reinterpret_cast<BasicNode *>(this)->insert(key, keyLength, reinterpret_cast<uint8_t *>(&child),
-                                                               sizeof(child));
-        default:
+                                                               sizeof(uint8_t *));
+        case BasicLeaf:
             throw;
     }
 }
 
 bool BTreeNode::splitNode(BTreeNode *parent) {
     switch (tag) {
-        case TAG_BASIC_INNER:
-        case TAG_BASIC_LEAF:
+        case BasicInner:
+        case BasicLeaf:
             return reinterpret_cast<BasicNode *>(this)->splitNode(parent);
-        default:
-            throw;
     }
 }
 
 bool BTreeNode::isUnderfull() {
     switch (tag) {
-        case TAG_BASIC_INNER:
-        case TAG_BASIC_LEAF: {
+        case BasicInner:
+        case BasicLeaf: {
             auto node = reinterpret_cast<BasicNode *>(this);
             return node->freeSpaceAfterCompaction() >= pageSize * 3 / 4;
         }
-        default:
-            throw;
     }
 }
 
 bool BTreeNode::remove(uint8_t *key, unsigned keyLen) {
     switch (tag) {
-        case TAG_BASIC_INNER:
-        case TAG_BASIC_LEAF:
+        case BasicInner:
+        case BasicLeaf:
             return reinterpret_cast<BasicNode *>(this)->remove(key, keyLen);
-        default:
-            throw;
     }
 }
 

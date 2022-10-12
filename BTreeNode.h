@@ -13,11 +13,13 @@
 constexpr unsigned pageSize = 4096;
 constexpr unsigned maxKVSize = pageSize / 4;
 
-constexpr uint8_t TAG_BASIC_LEAF = 0;
-constexpr uint8_t TAG_BASIC_INNER = 1;
+enum NodeTag : uint8_t {
+    BasicLeaf = 0,
+    BasicInner = 1,
+};
 
 struct BTreeNode {
-    uint8_t tag;
+    NodeTag tag;
 
     uint8_t *ptr() {
         return reinterpret_cast<uint8_t *>(this);
@@ -25,12 +27,10 @@ struct BTreeNode {
 
     bool isLeaf() {
         switch (tag) {
-            case TAG_BASIC_LEAF:
+            case NodeTag::BasicLeaf:
                 return true;
-            case TAG_BASIC_INNER:
+            case NodeTag::BasicInner:
                 return false;
-            default:
-                throw;
         }
     }
 

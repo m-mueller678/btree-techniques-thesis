@@ -18,7 +18,7 @@ uint8_t *BTree::lookup(uint8_t *key, unsigned keyLength, unsigned &payloadSizeOu
     unsigned outPos = 0;
     BTreeNode::descend(tagNode, key, keyLength, outPos);
     switch (tagNode->tag) {
-        case TAG_BASIC_LEAF: {
+        case BasicLeaf: {
             auto node = reinterpret_cast<BasicNode *>(tagNode);
             bool found;
             unsigned pos = node->lowerBound(key, keyLength, found);
@@ -27,7 +27,7 @@ uint8_t *BTree::lookup(uint8_t *key, unsigned keyLength, unsigned &payloadSizeOu
             payloadSizeOut = node->slot(pos)->getPayloadLen(node);
             return node->slot(pos)->getPayload(node);
         }
-        default:
+        case BasicInner:
             throw;
     }
 }
@@ -65,7 +65,7 @@ void BTree::insert(uint8_t *key, unsigned keyLength, uint8_t *payload, unsigned 
     unsigned outPos = 0;
     BTreeNode *parent = BTreeNode::descend(tagNode, key, keyLength, outPos);
     switch (tagNode->tag) {
-        case TAG_BASIC_LEAF: {
+        case BasicLeaf: {
             auto node = reinterpret_cast<BasicNode *>(tagNode);
             if (node->insert(key, keyLength, payload, payloadLength)) {
                 return;
@@ -75,7 +75,7 @@ void BTree::insert(uint8_t *key, unsigned keyLength, uint8_t *payload, unsigned 
             insert(key, keyLength, payload, payloadLength);
             return;
         }
-        default:
+        case BasicInner:
             throw;
     }
 }
