@@ -112,6 +112,35 @@ bool BTreeNode::remove(uint8_t *key, unsigned keyLen) {
     }
 }
 
-bool BTreeNode::mergeChildrenCheck(unsigned) {
-    return false; // TODO perform merge
+bool BTreeNode::mergeChildrenCheck(unsigned pos) {
+    switch (tag) {
+        case BasicInner:
+            return reinterpret_cast<BasicNode *>(this)->mergeChildrenCheck(pos);
+        case BasicLeaf:
+            throw;
+    }
+}
+
+bool BTreeNode::isLeaf() {
+    switch (tag) {
+        case NodeTag::BasicLeaf:
+            return true;
+        case NodeTag::BasicInner:
+            return false;
+    }
+}
+
+bool BTreeNode::isInner() {
+    return !isLeaf();
+}
+
+bool BTreeNode::mergeRight(uint8_t *sepKey, unsigned sepPrefixLen, unsigned sepRemainingLen, BTreeNode *right) {
+    assert(right->tag == tag);
+    switch (tag) {
+        case BasicLeaf:
+            return reinterpret_cast<BasicNode *>(this)->mergeRightLeaf(reinterpret_cast<BasicNode *>(right));
+        case BasicInner:
+            return reinterpret_cast<BasicNode *>(this)->mergeRightInner(sepKey, sepPrefixLen, sepRemainingLen,
+                                                                        reinterpret_cast<BasicNode *>(right));
+    }
 }

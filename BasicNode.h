@@ -43,7 +43,7 @@ struct BasicNode : BasicNodeheader {
 
     uint8_t *getPrefix() { return ptr() + lowerFence.offset; }
 
-    void validateSlots();
+    void validate();
 
     void searchHint(uint32_t keyHead, unsigned &lowerOut, unsigned &upperOut);
 
@@ -89,9 +89,15 @@ struct BasicNode : BasicNodeheader {
 
     void destroyInner();
 
-    bool removeSlot(unsigned slotId);
+    void removeSlot(unsigned slotId);
 
     bool remove(uint8_t *key, unsigned keyLen);
+
+    bool mergeRightInner(uint8_t *sepKey, unsigned sepPrefixLen, unsigned sepRemainingLen, BasicNode *right);
+
+    bool mergeRightLeaf(BasicNode *right);
+
+    bool mergeChildrenCheck(unsigned pos);
 };
 
 #endif //BTREE_BASICNODE_H

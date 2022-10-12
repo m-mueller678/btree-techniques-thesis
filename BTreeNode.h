@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <tuple>
 #include <functional>
+#include <cassert>
 
 // maximum page size (in bytes) is 65536
 constexpr unsigned pageSize = 4096;
@@ -25,18 +26,9 @@ struct BTreeNode {
         return reinterpret_cast<uint8_t *>(this);
     }
 
-    bool isLeaf() {
-        switch (tag) {
-            case NodeTag::BasicLeaf:
-                return true;
-            case NodeTag::BasicInner:
-                return false;
-        }
-    }
+    bool isLeaf();
 
-    bool isInner() {
-        return !isLeaf();
-    }
+    bool isInner();
 
     template<class T>
     bool containsPtr(T *ptr) {
@@ -69,9 +61,10 @@ struct BTreeNode {
     bool isUnderfull();
 
     // merges adjacent children if appropriate
-    bool mergeChildrenCheck(unsigned firstChild);
+    bool mergeChildrenCheck(unsigned child);
 
-    std::tuple<bool, BTreeNode *> copyTo(BTreeNode *dest);
+    // merge into right node
+    bool mergeRight(uint8_t *sepKey, unsigned sepPrefixLen, unsigned sepRemainingLen, BTreeNode *right);
 };
 
 #endif //BTREE_BTREENODE_H

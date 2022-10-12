@@ -74,14 +74,21 @@ void BasicNode::searchHint(uint32_t keyHead, unsigned int &lowerOut, unsigned in
     }
 }
 
-void BasicNode::validateSlots() {
+void BasicNode::validate() {
     for (unsigned i = 0; i < count; ++i) {
         slot(i)->validate(this);
+        if (i > 0) {
+            unsigned int l1 = slot(i - 1)->getKeyLen(this);
+            unsigned int l2 = slot(i)->getKeyLen(this);
+            auto cmp = memcmp(slot(i - 1)->getKey(this), slot(i)->getKey(this), min(l1, l2));
+            assert(i == 0 || cmp < 0 || cmp == 0 && l1 < l2);
+        }
     }
 }
 
 void BasicNode::copyKeyValueRange(BasicNode *dst, uint16_t dstSlot, uint16_t srcSlot, unsigned int srcCount) {
     if (prefixLength <= dst->prefixLength) {  // prefix grows
+        dst->count += srcCount;
         unsigned diff = dst->prefixLength - prefixLength;
         for (unsigned i = 0; i < srcCount; i++) {
             unsigned newKeyLength = slot(srcSlot + i)->getKeyLen(this) - diff;
@@ -100,11 +107,11 @@ void BasicNode::copyKeyValueRange(BasicNode *dst, uint16_t dstSlot, uint16_t src
             memcpy(dst->slot(dstSlot + i)->getKey(dst), key, space);
         }
     } else {
+        dst->count += srcCount;
         for (unsigned i = 0; i < srcCount; i++)
             copyKeyValue(srcSlot + i, dst, dstSlot + i);
     }
-    dst->count += srcCount;
-    dst->validateSlots();
+    dst->validate();
     assert((dst->ptr() + dst->dataOffset) >= reinterpret_cast<uint8_t *>(dst->slot(dst->count)));
 }
 
@@ -130,7 +137,6 @@ void BasicNode::storeKeyValue(uint16_t slotId, uint8_t *key, unsigned int keyLen
     assert(reinterpret_cast<uint8_t *>(slot(count)) <= reinterpret_cast<uint8_t *>(slot(slotId)->getKey(this)));
     memcpy(slot(slotId)->getKey(this), key, keyLength);
     memcpy(slot(slotId)->getPayload(this), payload, payloadLength);
-    validateSlots();
 }
 
 FatSlot *BasicNode::slot(unsigned int slotId) {
@@ -145,8 +151,10 @@ unsigned BasicNode::freeSpaceAfterCompaction() {
 
 void BasicNode::makeHint() {
     unsigned dist = count / (hintCount + 1);
-    for (unsigned i = 0; i < hintCount; i++)
+    for (unsigned i = 0; i < hintCount; i++) {
         hint[i] = slot(dist * (i + 1))->getHead();
+        assert(i == 0 || hint[i - 1] <= hint[i]);
+    }
 }
 
 void BasicNode::compactify() {
@@ -156,7 +164,7 @@ void BasicNode::compactify() {
     copyKeyValueRange(&tmp, 0, 0, count);
     tmp.upper = upper;
     memcpy(reinterpret_cast<char *>(this), &tmp, sizeof(BasicNode));
-    validateSlots();
+    validate();
     makeHint();
     assert(freeSpace() == should);
     (void) (should);
@@ -310,7 +318,7 @@ bool BasicNode::insert(uint8_t *key, unsigned int keyLength, uint8_t *payload, u
     assert(count < pageSize);
     count++;
     storeKeyValue(slotId, key, keyLength, payload, payloadLength);
-    validateSlots();
+    validate();
     updateHint(slotId);
     return true;
 }
@@ -320,8 +328,10 @@ void BasicNode::updateHint(unsigned int slotId) {
     unsigned begin = 0;
     if ((count > hintCount * 2 + 1) && (((count - 1) / (hintCount + 1)) == dist) && ((slotId / dist) > 1))
         begin = (slotId / dist) - 1;
-    for (unsigned i = begin; i < hintCount; i++)
+    for (unsigned i = begin; i < hintCount; i++) {
         hint[i] = slot(dist * (i + 1))->getHead();
+        assert(i == 0 || hint[i - 1] <= hint[i]);
+    }
 }
 
 void BasicNode::destroyInner() {
@@ -330,14 +340,13 @@ void BasicNode::destroyInner() {
     upper->destroy();
 }
 
-bool BasicNode::removeSlot(unsigned int slotId) {
+void BasicNode::removeSlot(unsigned int slotId) {
     spaceUsed -= slot(slotId)->getKeyLen(this);
     spaceUsed -= slot(slotId)->getPayloadLen(this);
     memmove(slot(slotId), slot(slotId + 1), sizeof(FatSlot) * (count - slotId - 1));
     count--;
-    validateSlots();
+    validate();
     makeHint();
-    return true;
 }
 
 bool BasicNode::remove(uint8_t *key, unsigned int keyLen) {
@@ -345,5 +354,69 @@ bool BasicNode::remove(uint8_t *key, unsigned int keyLen) {
     unsigned slotId = lowerBound(key, keyLen, found);
     if (!found)
         return false;
-    return removeSlot(slotId);
+    removeSlot(slotId);
+    return true;
+}
+
+bool BasicNode::mergeRightInner(uint8_t *sepKey, unsigned sepPrefixLen, unsigned sepRemainingLen, BasicNode *right) {
+    assert(tag == BasicInner);
+    assert(right->tag == BasicInner);
+    BasicNode tmp(false);
+    tmp.setFences(getLowerFence(), lowerFence.length, right->getUpperFence(), right->upperFence.length);
+    assert(tmp.prefixLength >= sepPrefixLen);
+    unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
+    unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
+    unsigned extraKeyLength = sepPrefixLen + sepRemainingLen - tmp.prefixLength;
+    unsigned spaceUpperBound =
+            spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t *>(slot(count + right->count)) - ptr()) +
+            leftGrow + rightGrow + tmp.spaceNeeded(extraKeyLength, sizeof(BTreeNode *));
+    if (spaceUpperBound > pageSize)
+        return false;
+    copyKeyValueRange(&tmp, 0, 0, count);
+    tmp.count++;
+    tmp.storeKeyValue(count, sepKey + (tmp.prefixLength - sepPrefixLen),
+                      sepPrefixLen + sepRemainingLen - tmp.prefixLength, reinterpret_cast<uint8_t *>(&upper),
+                      sizeof(upper));
+    right->copyKeyValueRange(&tmp, tmp.count, 0, right->count);
+    tmp.upper = right->upper;
+    tmp.makeHint();
+    memcpy(reinterpret_cast<uint8_t *>(right), &tmp, sizeof(BasicNode));
+    return true;
+}
+
+bool BasicNode::mergeRightLeaf(BasicNode *right) {
+    assert(tag == BasicLeaf);
+    assert(right->tag == BasicLeaf);
+    BasicNode tmp(true);
+    tmp.setFences(getLowerFence(), lowerFence.length, right->getUpperFence(), right->upperFence.length);
+    unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
+    unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
+    unsigned spaceUpperBound =
+            spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t *>(slot(count + right->count)) - ptr()) +
+            leftGrow + rightGrow;
+    if (spaceUpperBound > pageSize)
+        return false;
+    copyKeyValueRange(&tmp, 0, 0, count);
+    right->copyKeyValueRange(&tmp, tmp.count, 0, right->count);
+    tmp.makeHint();
+    tmp.validate();
+    memcpy(reinterpret_cast<uint8_t *>(right), &tmp, sizeof(BasicNode));
+    return true;
+}
+
+bool BasicNode::mergeChildrenCheck(unsigned int pos) {
+    assert(pos <= count);
+    if (pos == count) {
+        if (count == 0)
+            return false;
+        pos -= 1;
+    }
+    if (getChild(pos)->mergeRight(slot(pos)->getKey(this), prefixLength, slot(pos)->getKeyLen(this),
+                                  getChild(pos + 1))) {
+        delete getChild(pos);
+        this->removeSlot(pos);
+        validate();
+        return true;
+    }
+    return false;
 }
