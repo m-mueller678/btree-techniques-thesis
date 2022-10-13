@@ -121,21 +121,20 @@ void BasicNode::copyKeyValue(uint16_t srcSlot, BasicNode *dst, uint16_t dstSlot)
     uint8_t key[fullLength];
     memcpy(key, getPrefix(), prefixLength);
     memcpy(key + prefixLength, slot(srcSlot)->getKey(this), slot(srcSlot)->getKeyLen(this));
-    dst->storeKeyValue(dstSlot, key, fullLength, slot(srcSlot)->getPayload(this),
+    dst->storeKeyValue(dstSlot, key + dst->prefixLength, fullLength - dst->prefixLength,
+                       slot(srcSlot)->getPayload(this),
                        slot(srcSlot)->getPayloadLen(this));
 }
 
-void BasicNode::storeKeyValue(uint16_t slotId, uint8_t *key, unsigned int keyLength, uint8_t *payload,
+void BasicNode::storeKeyValue(uint16_t slotId, uint8_t *truncatedKey, unsigned int truncatedKeyLength, uint8_t *payload,
                               unsigned int payloadLength) {
     assert(slotId < count);
-    key += prefixLength;
-    keyLength -= prefixLength;
-    unsigned space = keyLength + payloadLength;
+    unsigned space = truncatedKeyLength + payloadLength;
     dataOffset -= space;
     spaceUsed += space;
-    slot(slotId)->write(this, dataOffset, keyLength, payloadLength, head(key, keyLength));
+    slot(slotId)->write(this, dataOffset, truncatedKeyLength, payloadLength, head(truncatedKey, truncatedKeyLength));
     assert(reinterpret_cast<uint8_t *>(slot(count)) <= reinterpret_cast<uint8_t *>(slot(slotId)->getKey(this)));
-    memcpy(slot(slotId)->getKey(this), key, keyLength);
+    memcpy(slot(slotId)->getKey(this), truncatedKey, truncatedKeyLength);
     memcpy(slot(slotId)->getPayload(this), payload, payloadLength);
 }
 
@@ -317,7 +316,8 @@ bool BasicNode::insert(uint8_t *key, unsigned int keyLength, uint8_t *payload, u
     memmove(slot(slotId + 1), slot(slotId), sizeof(FatSlot) * (count - slotId));
     assert(count < pageSize);
     count++;
-    storeKeyValue(slotId, key, keyLength, payload, payloadLength);
+    assert(keyLength >= prefixLength);
+    storeKeyValue(slotId, key + prefixLength, keyLength - prefixLength, payload, payloadLength);
     validate();
     updateHint(slotId);
     return true;
@@ -366,10 +366,9 @@ bool BasicNode::mergeRightInner(uint8_t *sepKey, unsigned sepPrefixLen, unsigned
     assert(tmp.prefixLength >= sepPrefixLen);
     unsigned leftGrow = (prefixLength - tmp.prefixLength) * count;
     unsigned rightGrow = (right->prefixLength - tmp.prefixLength) * right->count;
-    unsigned extraKeyLength = sepPrefixLen + sepRemainingLen - tmp.prefixLength;
     unsigned spaceUpperBound =
             spaceUsed + right->spaceUsed + (reinterpret_cast<uint8_t *>(slot(count + right->count)) - ptr()) +
-            leftGrow + rightGrow + tmp.spaceNeeded(extraKeyLength, sizeof(BTreeNode *));
+            leftGrow + rightGrow + tmp.spaceNeeded(sepPrefixLen + sepRemainingLen, sizeof(BTreeNode *));
     if (spaceUpperBound > pageSize)
         return false;
     copyKeyValueRange(&tmp, 0, 0, count);
