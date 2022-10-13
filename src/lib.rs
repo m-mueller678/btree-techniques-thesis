@@ -1,6 +1,12 @@
 use std::ptr;
+use crate::btree_node::BTreeNode;
 
-pub struct BTree {}
+pub mod btree_node;
+pub mod basic_node;
+
+pub struct BTree{
+    root:Box<BTreeNode>,
+}
 
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
