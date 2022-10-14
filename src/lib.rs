@@ -49,12 +49,40 @@ impl BTree {
         if success.is_err() {
             self.ensure_space(parent, key);
         }
+        self.validate(self.root, &[], &[]);
     }
 
     unsafe fn ensure_space(&mut self, to_split: *mut BTreeNode, key: &[u8]) {
         let (node, parent, _) = (*self.root).descend(key, |n| n == to_split);
         debug_assert!(node == to_split);
         self.split_node(to_split, parent, key);
+    }
+
+    unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        let tag = (*node).tag();
+        match tag {
+            BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
+                let node = &(*node).basic;
+                node.validate();
+                assert_eq!(node.fence(false), lower_fence);
+                assert_eq!(node.fence(true), upper_fence);
+                if tag.is_inner() {
+                    let mut current_lower_fence = lower_fence.to_vec();
+                    let mut current_upper_fence = current_lower_fence.clone();
+                    for (i, s) in node.slots().iter().enumerate() {
+                        assert!(current_upper_fence.len() >= node.prefix().len());
+                        current_upper_fence.truncate(node.prefix().len());
+                        current_upper_fence.extend_from_slice(s.key(node.as_bytes()));
+                        self.validate(node.get_child(i), &current_lower_fence, &current_upper_fence);
+                        std::mem::swap(&mut current_lower_fence, &mut current_upper_fence);
+                    }
+                    self.validate(node.upper(), &current_lower_fence, upper_fence);
+                }
+            }
+        }
     }
 }
 

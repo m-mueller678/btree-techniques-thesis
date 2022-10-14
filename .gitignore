@@ -8,3 +8,4 @@ btree-debug
 /cmake-build-release/
 /target/
 /Cargo.lock
+/btree-perf

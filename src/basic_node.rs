@@ -84,7 +84,7 @@ impl BasicNode {
         }
     }
 
-    fn validate(&self) {
+    pub fn validate(&self) {
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
                 assert!(w[0].key(self.as_bytes()) <= w[1].key(self.as_bytes()));
@@ -98,8 +98,16 @@ impl BasicNode {
                     + self.head.lower_fence.len
                     + self.head.upper_fence.len
             );
+            for s in self.slots() {
+                let h = s.head;
+                assert_eq!(h, head(s.key(self.as_bytes())));
+            }
             self.assert_no_collide();
         }
+    }
+
+    pub fn upper(&self) -> *mut BTreeNode {
+        self.head.upper
     }
 
     pub fn new_leaf() -> Self {
@@ -122,7 +130,7 @@ impl BasicNode {
         transmute(self as *mut Self)
     }
 
-    fn fence(&self, upper: bool) -> &[u8] {
+    pub fn fence(&self, upper: bool) -> &[u8] {
         let f = if upper {
             self.head.upper_fence
         } else {
@@ -131,7 +139,7 @@ impl BasicNode {
         &self.as_bytes()[f.offset as usize..][..f.len as usize]
     }
 
-    fn prefix(&self) -> &[u8] {
+    pub fn prefix(&self) -> &[u8] {
         &self.fence(false)[..self.head.prefix_len as usize]
     }
 
@@ -145,7 +153,7 @@ impl BasicNode {
 
     pub fn lower_bound(&self, mut key: &[u8]) -> (usize, bool) {
         debug_assert!(key <= self.fence(true) || self.fence(true).is_empty());
-        debug_assert!(key > self.fence(false));
+        debug_assert!(key > self.fence(false) || self.fence(false).is_empty());
         debug_assert!(&key[..self.head.prefix_len as usize] == self.prefix());
         if self.head.count == 0 {
             return (0, false);
@@ -160,7 +168,12 @@ impl BasicNode {
                 .then_with(|| s.key(self.as_bytes()).cmp(key))
         });
         match search_result {
-            Ok(index) | Err(index) => (index + lower, search_result.is_ok()),
+            Ok(index) | Err(index) => {
+                let index = index + lower;
+                debug_assert!(index == self.slots().len() || key <= self.slots()[index].key(self.as_bytes()));
+                debug_assert!(index == 0 || key > self.slots()[index - 1].key(self.as_bytes()));
+                (index, search_result.is_ok())
+            }
         }
     }
 
@@ -289,15 +302,18 @@ impl BasicNode {
                 (self.head.prefix_len - dst.head.prefix_len) as usize,
             ))
         };
+        let new_key_len = src_slot.key_len + self.head.prefix_len - dst.head.prefix_len;
+        let head = head(short_slice(dst.as_bytes(), offset, new_key_len));
         dst.push_slot(BasicSlot {
             offset,
-            key_len: src_slot.key_len + self.head.prefix_len - dst.head.prefix_len,
+            key_len: new_key_len,
             val_len: src_slot.val_len,
-            head: 0,
+            head,
         });
     }
 
     fn set_fences(&mut self, lower: &[u8], upper: &[u8]) {
+        debug_assert!(lower <= upper || upper.is_empty());
         self.head.prefix_len = common_prefix_len(lower, upper) as u16;
         self.head.lower_fence = FenceKeySlot {
             offset: self.write_data(lower),
@@ -370,7 +386,11 @@ impl BasicNode {
 
     pub fn split_node(&mut self, parent: &mut BTreeNode) -> Result<(), ()> {
         // split
-        let (sep_slot, sep_key) = self.find_separator();
+        let (sep_slot, truncated_sep_key) = self.find_separator();
+        let mut sep_key_buffer = [0; PAGE_SIZE / 4];
+        sep_key_buffer[..self.prefix().len()].copy_from_slice(self.prefix());
+        sep_key_buffer[self.prefix().len()..][..truncated_sep_key.len()].copy_from_slice(truncated_sep_key);
+        let sep_key = &sep_key_buffer[..truncated_sep_key.len() + self.prefix().len()];
         let space_needed_parent = parent.space_needed(sep_key.len(), size_of::<*mut BTreeNode>());
         parent.request_space(space_needed_parent)?;
         let node_left_raw = BTreeNode::alloc();
@@ -381,17 +401,8 @@ impl BasicNode {
         node_left.set_fences(self.fence(false), sep_key);
         let mut node_right = Self::new(self.head.tag.is_leaf());
         node_right.set_fences(sep_key, self.fence(true));
-        {
-            let prefix_len = self.prefix().len();
-            let mut buffer = [0u8; PAGE_SIZE / 4];
-            buffer[..prefix_len].copy_from_slice(self.prefix());
-            buffer[prefix_len..][..sep_key.len()].copy_from_slice(sep_key);
-            let full_sep_key = &buffer[..prefix_len + sep_key.len()];
-            let success = parent
-                .insert(full_sep_key, &(node_left_raw as usize).to_ne_bytes())
-                .is_ok();
-            debug_assert!(success);
-        }
+        let success = parent.insert(sep_key, &(node_left_raw as usize).to_ne_bytes()).is_ok();
+        debug_assert!(success);
         if self.head.tag.is_leaf() {
             self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
             self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
@@ -440,5 +451,11 @@ impl BasicNode {
             }
         }
         (best_slot, k(best_slot))
+    }
+
+    pub fn print_slots(&self) {
+        for (i, s) in self.slots().iter().enumerate() {
+            eprintln!("{:4}|{:3?}|{:3?}", i, s.head.to_be_bytes(), s.key(self.as_bytes()));
+        }
     }
 }

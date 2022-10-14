@@ -11,3 +11,6 @@ num_enum = "0.5.7"
 
 [lib]
 crate-type = ["staticlib","lib"]
+
+[profile.dev]
+opt-level = 1
