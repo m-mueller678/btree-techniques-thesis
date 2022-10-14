@@ -2,7 +2,7 @@
 /*
 unsigned countInner(BTreeNode* node)
 {
-   if (node->isLeaf)
+   if (node->is_leaf)
       return 0;
    unsigned sum = 1;
    for (unsigned i = 0; i < node->count; i++)
@@ -13,7 +13,7 @@ unsigned countInner(BTreeNode* node)
 
 unsigned countPages(BTreeNode* node)
 {
-   if (node->isLeaf)
+   if (node->is_leaf)
       return 1;
    unsigned sum = 1;
    for (unsigned i = 0; i < node->count; i++)
@@ -24,7 +24,7 @@ unsigned countPages(BTreeNode* node)
 
 uint64_t bytesFree(BTreeNode* node)
 {
-   if (node->isLeaf)
+   if (node->is_leaf)
       return node->freeSpaceAfterCompaction();
    uint64_t sum = node->freeSpaceAfterCompaction();
    for (unsigned i = 0; i < node->count; i++)
@@ -35,7 +35,7 @@ uint64_t bytesFree(BTreeNode* node)
 
 unsigned height(BTreeNode* node)
 {
-   if (node->isLeaf)
+   if (node->is_leaf)
       return 1;
    return 1 + height(node->upper);
 }
@@ -54,9 +54,9 @@ void pr(uint8_t* s, unsigned len) {
 }
 
 void printTree(BTreeNode* node) {
-   cout << (node->isLeaf?"L":"I") << " " << node << endl;
+   cout << (node->is_leaf?"L":"I") << " " << node << endl;
 
-   if (node->isLeaf) {
+   if (node->is_leaf) {
       for (unsigned i=0; i<node->count; i++) {
          cout << i << " " << node->getKey(i) << " ";
          pr(node->getPrefix(), node->prefixLength);

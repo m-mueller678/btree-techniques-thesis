@@ -1,37 +1,88 @@
+use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use std::{ptr, slice};
-use crate::basic_node::BasicNode;
-use crate::btree_node::{BTreeNode, BTreeNodeTag};
 
-pub mod btree_node;
 pub mod basic_node;
+pub mod btree_node;
 pub mod util;
 
 pub struct BTree {
-    root: Box<BTreeNode>,
+    root: *mut BTreeNode,
 }
 
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
     Box::leak(Box::new(BTree {
-        root: Box::new(BTreeNode {
-            basic: BasicNode::init_leaf(),
-        })
+        root: BTreeNode::new_leaf(),
     }))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn btree_insert(b_tree: *mut BTree, key: *const u8, key_len: u64, payload: *const u8, paylod_len: u64) -> bool {
-    #[cfg(debug_assertions)]
-    println!("debug");
-    println!("insert");
-    true
+impl BTree {
+    fn insert(&mut self, key: &[u8], payload: &[u8]) {
+        assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
+        unsafe {
+            let (node, parent, _) = (&mut *self.root).descend(key, |_| false);
+            let node = &mut *node;
+            match node.tag() {
+                BTreeNodeTag::BasicInner => unreachable!(),
+                BTreeNodeTag::BasicLeaf => {
+                    if node.basic.insert(key, payload).is_ok() {
+                        return;
+                    }
+                    // node is full: split and restart
+                    self.split_node(node, parent, key);
+                    self.insert(key, payload);
+                }
+            }
+        }
+    }
+
+    unsafe fn split_node(&mut self, node: *mut BTreeNode, mut parent: *mut BTreeNode, key: &[u8]) {
+        if parent.is_null() {
+            parent = BTreeNode::new_inner(node);
+            self.root = parent;
+        }
+        let success = match (*node).tag() {
+            BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
+                (*node).basic.split_node(&mut *parent)
+            }
+        };
+        if success.is_err() {
+            self.ensure_space(parent, key);
+        }
+    }
+
+    unsafe fn ensure_space(&mut self, to_split: *mut BTreeNode, key: &[u8]) {
+        let (node, parent, _) = (*self.root).descend(key, |n| n == to_split);
+        debug_assert!(node == to_split);
+        self.split_node(to_split, parent, key);
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn btree_lookup(b_tree: *mut BTree, key: *const u8, key_len: u64, payload_len_out: *mut u64) -> *const u8 {
+pub unsafe extern "C" fn btree_insert(
+    b_tree: *mut BTree,
+    key: *const u8,
+    key_len: u64,
+    payload: *const u8,
+    payload_len: u64,
+) {
+    BTree::insert(
+        &mut *b_tree,
+        slice::from_raw_parts(key, key_len as usize),
+        slice::from_raw_parts(payload, payload_len as usize),
+    )
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn btree_lookup(
+    b_tree: *mut BTree,
+    key: *const u8,
+    key_len: u64,
+    payload_len_out: *mut u64,
+) -> *const u8 {
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
-    let (node, _, _) = b_tree.root.descend(key, |_| false);
+    let (node, _, _) = (*b_tree.root).descend(key, |_| false);
     let node = &*node;
     match node.tag() {
         BTreeNodeTag::BasicInner => unreachable!(),

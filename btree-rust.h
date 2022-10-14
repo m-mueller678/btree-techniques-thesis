@@ -10,7 +10,7 @@ extern "C" {
 struct RustBTree;
 
 RustBTree *btree_new();
-bool btree_insert(RustBTree *b_tree, std::uint8_t *key, std::uint64_t keyLen, std::uint8_t *payload,
+void btree_insert(RustBTree *b_tree, std::uint8_t *key, std::uint64_t keyLen, std::uint8_t *payload,
                   std::uint64_t payloadLen);
 std::uint8_t *btree_lookup(RustBTree *b_tree, std::uint8_t *key, std::uint64_t keyLen, std::uint64_t *payloadLenOut);
 bool btree_remove(RustBTree *b_tree, std::uint8_t *key, std::uint64_t keyLen);

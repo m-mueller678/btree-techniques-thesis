@@ -1,6 +1,6 @@
-use std::mem::size_of;
 use btree::basic_node::BasicNode;
+use std::mem::size_of;
 
-fn main(){
+fn main() {
     dbg!(size_of::<BasicNode>());
 }
