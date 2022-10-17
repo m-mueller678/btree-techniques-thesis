@@ -13,9 +13,12 @@ pub struct BasicSlot {
     pub head: u32,
 }
 
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
+pub struct PrefixTruncatedKey<'a>(pub &'a [u8]);
+
 impl BasicSlot {
-    pub fn key<'a>(&self, page: &'a [u8; PAGE_SIZE]) -> &'a [u8] {
-        short_slice(page, self.offset, self.key_len)
+    pub fn key<'a>(&self, page: &'a [u8; PAGE_SIZE]) -> PrefixTruncatedKey<'a> {
+        PrefixTruncatedKey(short_slice(page, self.offset, self.key_len))
     }
 
     pub fn value<'a>(&self, page: &'a [u8; PAGE_SIZE]) -> &'a [u8] {
@@ -87,7 +90,7 @@ impl BasicNode {
     pub fn validate(&self) {
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
-                assert!(w[0].key(self.as_bytes()) <= w[1].key(self.as_bytes()));
+                assert!(w[0].key(self.as_bytes()).0 <= w[1].key(self.as_bytes()).0);
             }
             assert_eq!(
                 self.head.space_used,
@@ -151,21 +154,21 @@ impl BasicNode {
         unsafe { &mut self.data.slots[..self.head.count as usize] }
     }
 
-    pub fn lower_bound(&self, mut key: &[u8]) -> (usize, bool) {
+    pub fn lower_bound(&self, key: &[u8]) -> (usize, bool) {
         debug_assert!(key <= self.fence(true) || self.fence(true).is_empty());
         debug_assert!(key > self.fence(false) || self.fence(false).is_empty());
         debug_assert!(&key[..self.head.prefix_len as usize] == self.prefix());
         if self.head.count == 0 {
             return (0, false);
         }
-        key = &key[self.head.prefix_len as usize..];
+        let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
         let head = head(key);
         let (lower, upper) = self.search_hint(head);
         let search_result = self.slots()[lower..upper].binary_search_by(|s| {
             let slot_head = s.head;
             slot_head
                 .cmp(&head)
-                .then_with(|| s.key(self.as_bytes()).cmp(key))
+                .then_with(|| s.key(self.as_bytes()).cmp(&key))
         });
         match search_result {
             Ok(index) | Err(index) => {
@@ -222,7 +225,7 @@ impl BasicNode {
         let count = self.head.count as usize;
         self.slots_mut()
             .copy_within(slot_id..count - 1, slot_id + 1);
-        self.store_key_value(slot_id, &key[self.head.prefix_len as usize..], payload);
+        self.store_key_value(slot_id, PrefixTruncatedKey(&key[self.head.prefix_len as usize..]), payload);
         self.update_hint(slot_id);
         self.validate();
         Ok(())
@@ -264,23 +267,8 @@ impl BasicNode {
     }
 
     fn copy_key_value_range(&self, src_slots: &[BasicSlot], dst: &mut Self) {
-        if dst.head.prefix_len >= self.head.prefix_len {
-            let diff = dst.head.prefix_len - self.head.prefix_len;
-            for src in src_slots {
-                let new_key = &src.key(self.as_bytes())[diff as usize..];
-                dst.write_data(src.value(self.as_bytes()));
-                let offset = dst.write_data(new_key);
-                dst.push_slot(BasicSlot {
-                    offset,
-                    key_len: new_key.len() as u16,
-                    val_len: src.val_len,
-                    head: head(new_key),
-                })
-            }
-        } else {
-            for s in src_slots {
-                self.copy_key_value(s, dst);
-            }
+        for s in src_slots {
+            self.copy_key_value(s, dst);
         }
     }
 
@@ -291,21 +279,23 @@ impl BasicNode {
     }
 
     fn copy_key_value(&self, src_slot: &BasicSlot, dst: &mut BasicNode) {
-        dst.write_data(src_slot.value(self.as_bytes()));
+        let new_key_len = src_slot.key_len + self.head.prefix_len - dst.head.prefix_len;
+        let previous_offset = dst.head.data_offset;
         let offset = if self.head.prefix_len <= dst.head.prefix_len {
-            dst.write_data(
-                &src_slot.key(self.as_bytes())
-                    [(dst.head.prefix_len - self.head.prefix_len) as usize..],
-            )
+            // string shrinks or stays same length
+            dst.write_data(src_slot.value(self.as_bytes()));
+            dst.write_data(&trailing_bytes(src_slot.key(self.as_bytes()).0, new_key_len as usize))
         } else {
-            dst.write_data(src_slot.key(self.as_bytes()));
+            // string grows
+            dst.write_data(src_slot.value(self.as_bytes()));
+            dst.write_data(src_slot.key(self.as_bytes()).0);
             dst.write_data(trailing_bytes(
                 self.prefix(),
                 (self.head.prefix_len - dst.head.prefix_len) as usize,
             ))
         };
-        let new_key_len = src_slot.key_len + self.head.prefix_len - dst.head.prefix_len;
-        let head = head(short_slice(dst.as_bytes(), offset, new_key_len));
+        debug_assert_eq!(offset + new_key_len + src_slot.val_len, previous_offset);
+        let head = head(PrefixTruncatedKey(short_slice(dst.as_bytes(), offset, new_key_len)));
         dst.push_slot(BasicSlot {
             offset,
             key_len: new_key_len,
@@ -327,12 +317,12 @@ impl BasicNode {
         };
     }
 
-    fn store_key_value(&mut self, slot_id: usize, prefix_truncated_key: &[u8], payload: &[u8]) {
+    fn store_key_value(&mut self, slot_id: usize, prefix_truncated_key: PrefixTruncatedKey, payload: &[u8]) {
         self.write_data(payload);
-        let key_offset = self.write_data(prefix_truncated_key);
+        let key_offset = self.write_data(prefix_truncated_key.0);
         self.slots_mut()[slot_id] = BasicSlot {
             offset: key_offset,
-            key_len: prefix_truncated_key.len() as u16,
+            key_len: prefix_truncated_key.0.len() as u16,
             val_len: payload.len() as u16,
             head: head(prefix_truncated_key),
         };
@@ -394,8 +384,8 @@ impl BasicNode {
         let (sep_slot, truncated_sep_key) = self.find_separator();
         let mut sep_key_buffer = [0; PAGE_SIZE / 4];
         sep_key_buffer[..self.prefix().len()].copy_from_slice(self.prefix());
-        sep_key_buffer[self.prefix().len()..][..truncated_sep_key.len()].copy_from_slice(truncated_sep_key);
-        let sep_key = &sep_key_buffer[..truncated_sep_key.len() + self.prefix().len()];
+        sep_key_buffer[self.prefix().len()..][..truncated_sep_key.0.len()].copy_from_slice(truncated_sep_key.0);
+        let sep_key = &sep_key_buffer[..truncated_sep_key.0.len() + self.prefix().len()];
         let space_needed_parent = parent.space_needed(sep_key.len(), size_of::<*mut BTreeNode>());
         parent.request_space(space_needed_parent)?;
         let node_left_raw = BTreeNode::alloc();
@@ -425,8 +415,8 @@ impl BasicNode {
     }
 
     /// returns slot_id and prefix truncated separator
-    fn find_separator(&self) -> (usize, &[u8]) {
-        let k = |i: usize| self.slots()[i].key(self.as_bytes());
+    fn find_separator(&self) -> (usize, PrefixTruncatedKey) {
+        let k = |i: usize| self.slots()[i].key(self.as_bytes()).0;
 
         debug_assert!(self.head.count > 1);
         if self.head.tag.is_inner() {
@@ -452,10 +442,10 @@ impl BasicNode {
         if best_slot + 1 < self.slots().len() {
             let common = common_prefix_len(k(best_slot), k(best_slot + 1));
             if k(best_slot).len() > common && k(best_slot + 1).len() > common + 1 {
-                return (best_slot, &k(best_slot + 1)[..common + 1]);
+                return (best_slot, PrefixTruncatedKey(&k(best_slot + 1)[..common + 1]));
             }
         }
-        (best_slot, k(best_slot))
+        (best_slot, PrefixTruncatedKey(k(best_slot)))
     }
 
     pub fn print_slots(&self) {
@@ -473,7 +463,9 @@ impl BasicNode {
             child_index -= 1;
         }
         unsafe {
-            (*self.get_child(child_index)).try_merge_right(self.get_child(child_index + 1), self.slots()[child_index].key(self.as_bytes()))?;
+            let left = &mut *self.get_child(child_index);
+            let right = self.get_child(child_index + 1);
+            left.try_merge_right(right, self.slots()[child_index].key(self.as_bytes()), self.prefix().len())?;
             BTreeNode::dealloc(self.get_child(child_index));
             self.remove_slot(child_index);
             self.validate();
@@ -500,20 +492,22 @@ impl BasicNode {
         return Ok(());
     }
 
-    pub fn merge_right_inner(&mut self, right: &mut Self, separator: &[u8]) -> Result<(), ()> {
+    pub fn merge_right_inner(&mut self, right: &mut Self, separator: PrefixTruncatedKey, separator_prefix_len: usize) -> Result<(), ()> {
         let mut tmp = BasicNode::new_inner(right.head.upper);
         tmp.set_fences(self.fence(false), right.fence(true));
+        let separator_prefix_len_diff = tmp.prefix().len() - separator_prefix_len;
         let left_grow = (self.head.prefix_len - tmp.head.prefix_len) * self.head.count;
         let right_grow = (right.head.prefix_len - tmp.head.prefix_len) * right.head.count;
-        let space_upper_bound = self.head.space_used as usize + right.head.space_used as usize + size_of::<BasicNodeHead>()
+        let separator_len = separator.0.len() - separator_prefix_len_diff;
+        let space_use = self.head.space_used as usize + right.head.space_used as usize + size_of::<BasicNodeHead>()
             + size_of::<BasicSlot>() * (self.head.count + right.head.count) as usize + left_grow as usize + right_grow as usize
-            + Self::space_needed(separator.len(), size_of::<*mut BTreeNode>());
-        if space_upper_bound > PAGE_SIZE {
+            + Self::space_needed(separator_len, size_of::<*mut BTreeNode>());
+        if space_use > PAGE_SIZE {
             return Err(());
         }
         self.copy_key_value_range(self.slots(), &mut tmp);
         tmp.head.count += 1;
-        tmp.store_key_value(self.head.count as usize, &separator[tmp.head.prefix_len as usize..], &(self.head.upper as usize).to_ne_bytes());
+        tmp.store_key_value(self.head.count as usize, PrefixTruncatedKey(&separator.0[separator_prefix_len_diff..]), &(self.head.upper as usize).to_ne_bytes());
         right.copy_key_value_range(right.slots(), &mut tmp);
         tmp.make_hint();
         *right = tmp;

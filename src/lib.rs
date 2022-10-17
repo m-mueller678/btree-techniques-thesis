@@ -46,10 +46,10 @@ impl BTree {
                 (*node).basic.split_node(&mut *parent)
             }
         };
+        self.validate(self.root, &[], &[]);
         if success.is_err() {
             self.ensure_space(parent, key);
         }
-        self.validate(self.root, &[], &[]);
     }
 
     unsafe fn ensure_space(&mut self, to_split: *mut BTreeNode, key: &[u8]) {
@@ -59,6 +59,7 @@ impl BTree {
     }
 
     unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
+        //return;
         if !cfg!(debug_assertions) {
             return;
         }
@@ -75,7 +76,7 @@ impl BTree {
                     for (i, s) in node.slots().iter().enumerate() {
                         assert!(current_upper_fence.len() >= node.prefix().len());
                         current_upper_fence.truncate(node.prefix().len());
-                        current_upper_fence.extend_from_slice(s.key(node.as_bytes()));
+                        current_upper_fence.extend_from_slice(s.key(node.as_bytes()).0);
                         self.validate(node.get_child(i), &current_lower_fence, &current_upper_fence);
                         std::mem::swap(&mut current_lower_fence, &mut current_upper_fence);
                     }

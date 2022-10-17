@@ -1,4 +1,4 @@
-use crate::basic_node::BasicNode;
+use crate::basic_node::{BasicNode, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::{mem, ptr};
 
@@ -123,11 +123,11 @@ impl BTreeNode {
         }
     }
 
-    pub unsafe fn try_merge_right(&mut self, right: *mut BTreeNode, separator: &[u8]) -> Result<(), ()> {
+    pub unsafe fn try_merge_right(&mut self, right: *mut BTreeNode, separator: PrefixTruncatedKey, separator_prefix_len: usize) -> Result<(), ()> {
         debug_assert!((*right).tag() == self.tag());
         debug_assert!(right != self);
         match self.tag() {
-            BTreeNodeTag::BasicInner => self.basic.merge_right_inner(&mut (*right).basic, separator),
+            BTreeNodeTag::BasicInner => self.basic.merge_right_inner(&mut (*right).basic, separator, separator_prefix_len),
             BTreeNodeTag::BasicLeaf => self.basic.merge_right_leaf(&mut (*right).basic),
         }
     }
