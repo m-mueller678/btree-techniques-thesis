@@ -14,3 +14,6 @@ crate-type = ["staticlib","lib"]
 
 [profile.dev]
 opt-level = 1
+
+[profile.release]
+lto = true
