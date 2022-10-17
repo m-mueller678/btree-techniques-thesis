@@ -4,7 +4,7 @@ use std::{mem, ptr};
 
 pub const PAGE_SIZE: usize = 4096;
 
-#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
 pub enum BTreeNodeTag {
     BasicLeaf,
@@ -62,6 +62,10 @@ impl BTreeNode {
         }))
     }
 
+    pub unsafe fn dealloc(node: *mut BTreeNode) {
+        drop(Box::from_raw(node));
+    }
+
     pub fn new_leaf() -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
@@ -98,6 +102,40 @@ impl BTreeNode {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
                 self.basic.insert(key, payload)
+            },
+        }
+    }
+
+    pub fn is_underfull(&self) -> bool {
+        match self.tag() {
+            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
+                self.basic.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
+            },
+        }
+    }
+
+    pub fn try_merge_child(&mut self, child_index: usize) -> Result<(), ()> {
+        match self.tag() {
+            BTreeNodeTag::BasicInner => unsafe {
+                self.basic.merge_children_check(child_index)
+            },
+            BTreeNodeTag::BasicLeaf => panic!(),
+        }
+    }
+
+    pub unsafe fn try_merge_right(&mut self, right: *mut BTreeNode, separator: &[u8]) -> Result<(), ()> {
+        debug_assert!((*right).tag() == self.tag());
+        debug_assert!(right != self);
+        match self.tag() {
+            BTreeNodeTag::BasicInner => self.basic.merge_right_inner(&mut (*right).basic, separator),
+            BTreeNodeTag::BasicLeaf => self.basic.merge_right_leaf(&mut (*right).basic),
+        }
+    }
+
+    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
+        match self.tag() {
+            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
+                self.basic.remove(key)
             },
         }
     }

@@ -9,3 +9,4 @@ btree-debug
 /target/
 /Cargo.lock
 /btree-perf
+/data/

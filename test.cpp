@@ -62,8 +62,9 @@ void runTest(BenchmarkParameters parameters, vector<string> &data) {
             t.insert((uint8_t *) data[i].data(), data[i].size(), reinterpret_cast<uint8_t *>(&i), sizeof(uint64_t));
         for (uint64_t i = 0; i < count; i++) { // remove all
             bool should = i < count / 2 + count / 4 || i % 4 != 0;
-            (void)(should);
-            assert(should == t.remove((uint8_t *) data[i].data(), data[i].size()));
+            (void) (should);
+            if (should != t.remove((uint8_t *) data[i].data(), data[i].size()))
+                throw;
         }
         for (uint64_t i = 0; i < count; i++)
             if (t.lookup((uint8_t *) data[i].data(), data[i].size()))

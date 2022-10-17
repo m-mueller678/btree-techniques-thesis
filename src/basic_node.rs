@@ -201,14 +201,16 @@ impl BasicNode {
         }
     }
 
-    pub unsafe fn get_child(&self, index: usize) -> *mut BTreeNode {
+    pub fn get_child(&self, index: usize) -> *mut BTreeNode {
         debug_assert!(index <= self.head.count as usize);
         if index == self.head.count as usize {
             self.head.upper
         } else {
-            ptr::read_unaligned(
-                self.slots()[index].value(self.as_bytes()).as_ptr() as *const *mut BTreeNode
-            )
+            unsafe {
+                ptr::read_unaligned(
+                    self.slots()[index].value(self.as_bytes()).as_ptr() as *const *mut BTreeNode
+                )
+            }
         }
     }
 
@@ -232,7 +234,7 @@ impl BasicNode {
             - self.slots().len() * size_of::<BasicSlot>()
     }
 
-    fn free_space_after_compaction(&self) -> usize {
+    pub fn free_space_after_compaction(&self) -> usize {
         PAGE_SIZE
             - self.head.space_used as usize
             - size_of::<BasicNodeHead>()
@@ -373,6 +375,9 @@ impl BasicNode {
 
     fn make_hint(&mut self) {
         let count = self.head.count as usize;
+        if count == 0 {
+            return;
+        }
         let dist = count / (HINT_COUNT + 1);
         for i in 0..HINT_COUNT {
             self.head.hint[i] = self.slots()[dist * (i + 1)].head;
@@ -410,7 +415,7 @@ impl BasicNode {
             // in inner node split, separator moves to parent (count == 1 + nodeLeft->count + nodeRight->count)
             self.copy_key_value_range(&self.slots()[..sep_slot], node_left);
             self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
-            node_left.head.upper = unsafe { self.get_child(node_left.head.count as usize) };
+            node_left.head.upper = self.get_child(node_left.head.count as usize);
             node_right.head.upper = self.head.upper;
         }
         node_left.make_hint();
@@ -457,5 +462,79 @@ impl BasicNode {
         for (i, s) in self.slots().iter().enumerate() {
             eprintln!("{:4}|{:3?}|{:3?}", i, s.head.to_be_bytes(), s.key(self.as_bytes()));
         }
+    }
+
+    pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
+        if child_index == self.slots().len() {
+            if child_index == 0 {
+                // only one child
+                return Err(());
+            }
+            child_index -= 1;
+        }
+        unsafe {
+            (*self.get_child(child_index)).try_merge_right(self.get_child(child_index + 1), self.slots()[child_index].key(self.as_bytes()))?;
+            BTreeNode::dealloc(self.get_child(child_index));
+            self.remove_slot(child_index);
+            self.validate();
+            Ok(())
+        }
+    }
+
+    pub fn merge_right_leaf(&mut self, right: &mut Self) -> Result<(), ()> {
+        let mut tmp = BasicNode::new_leaf();
+        tmp.set_fences(self.fence(false), right.fence(true));
+        let left_grow = (self.head.prefix_len - tmp.head.prefix_len) * self.head.count;
+        let right_grow = (right.head.prefix_len - tmp.head.prefix_len) * right.head.count;
+        let space_upper_bound =
+            self.head.space_used as usize + right.head.space_used as usize + size_of::<BasicNodeHead>()
+                + size_of::<BasicSlot>() * (self.head.count + right.head.count) as usize + left_grow as usize + right_grow as usize;
+        if space_upper_bound > PAGE_SIZE {
+            return Err(());
+        }
+        self.copy_key_value_range(self.slots(), &mut tmp);
+        right.copy_key_value_range(right.slots(), &mut tmp);
+        tmp.make_hint();
+        tmp.validate();
+        *right = tmp;
+        return Ok(());
+    }
+
+    pub fn merge_right_inner(&mut self, right: &mut Self, separator: &[u8]) -> Result<(), ()> {
+        let mut tmp = BasicNode::new_inner(right.head.upper);
+        tmp.set_fences(self.fence(false), right.fence(true));
+        let left_grow = (self.head.prefix_len - tmp.head.prefix_len) * self.head.count;
+        let right_grow = (right.head.prefix_len - tmp.head.prefix_len) * right.head.count;
+        let space_upper_bound = self.head.space_used as usize + right.head.space_used as usize + size_of::<BasicNodeHead>()
+            + size_of::<BasicSlot>() * (self.head.count + right.head.count) as usize + left_grow as usize + right_grow as usize
+            + Self::space_needed(separator.len(), size_of::<*mut BTreeNode>());
+        if space_upper_bound > PAGE_SIZE {
+            return Err(());
+        }
+        self.copy_key_value_range(self.slots(), &mut tmp);
+        tmp.head.count += 1;
+        tmp.store_key_value(self.head.count as usize, &separator[tmp.head.prefix_len as usize..], &(self.head.upper as usize).to_ne_bytes());
+        right.copy_key_value_range(right.slots(), &mut tmp);
+        tmp.make_hint();
+        *right = tmp;
+        Ok(())
+    }
+
+    pub fn remove_slot(&mut self, index: usize) {
+        self.head.space_used -= self.slots()[index].key_len + self.slots()[index].val_len;
+        let back_slots = &mut self.slots_mut()[index..];
+        back_slots.copy_within(1.., 0);
+        self.head.count -= 1;
+        self.make_hint();
+        self.validate();
+    }
+
+    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
+        let (slot_id, found) = self.lower_bound(key);
+        if !found {
+            return None;
+        }
+        self.remove_slot(slot_id);
+        Some(())
     }
 }

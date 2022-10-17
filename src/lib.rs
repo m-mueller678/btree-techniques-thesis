@@ -130,7 +130,32 @@ pub unsafe extern "C" fn btree_lookup(
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_len: u64) -> bool {
-    println!("remove");
+    let key = slice::from_raw_parts(key, key_len as usize);
+    let b_tree = &mut *b_tree;
+    let mut merge_target: *mut BTreeNode = ptr::null_mut();
+    loop {
+        let (node, parent, index) = (&mut *b_tree.root).descend(key, |n| n == merge_target);
+        if merge_target.is_null() {
+            if (*node).remove(key).is_none() {
+                return false;
+            }
+            if (*node).is_underfull() {
+                merge_target = node;
+            } else {
+                return true;
+            }
+        }
+        debug_assert!(merge_target == node);
+        if parent.is_null() {
+            break;
+        }
+        if (*parent).try_merge_child(index).is_ok() && (*parent).is_underfull() {
+            merge_target = parent;
+            continue;
+        } else {
+            break;
+        }
+    }
     true
 }
 
