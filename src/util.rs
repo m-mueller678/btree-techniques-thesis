@@ -1,6 +1,7 @@
 pub fn head(key: &[u8]) -> u32 {
     let mut k_padded = [0u8; 4];
-    k_padded[..key.len().min(4)].copy_from_slice(key);
+    let head_len =key.len().min(4);
+    k_padded[..head_len].copy_from_slice(&key[..head_len]);
     u32::from_be_bytes(k_padded)
 }
 
