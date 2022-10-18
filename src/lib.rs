@@ -1,8 +1,11 @@
+extern crate core;
+
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use std::{ptr, slice};
 
 pub mod basic_node;
 pub mod btree_node;
+pub mod head_stripped_node;
 pub mod util;
 
 pub struct BTree {
@@ -32,6 +35,19 @@ impl BTree {
                     self.split_node(node, parent, key);
                     self.insert(key, payload);
                 }
+                BTreeNodeTag::HeadTruncatedInner => unreachable!(),
+                BTreeNodeTag::HeadTruncatedLeaf => {
+                    if node
+                        .head_truncated
+                        .insert(PrefixTruncatedKey(key), 0, payload)
+                        .is_ok()
+                    {
+                        return;
+                    }
+                    // node is full: split and restart
+                    self.split_node(node, parent, key);
+                    self.insert(key, payload);
+                }
             }
         }
     }
@@ -44,6 +60,9 @@ impl BTree {
         let success = match (*node).tag() {
             BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
                 (*node).basic.split_node(&mut *parent)
+            }
+            BTreeNodeTag::HeadTruncatedLeaf | BTreeNodeTag::HeadTruncatedInner => {
+                (*node).head_truncated.split_node(&mut *parent, key)
             }
         };
         self.validate(self.root, &[], &[]);
@@ -59,7 +78,7 @@ impl BTree {
     }
 
     unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
-        //return;
+        return;
         if !cfg!(debug_assertions) {
             return;
         }
@@ -77,12 +96,18 @@ impl BTree {
                         assert!(current_upper_fence.len() >= node.prefix().len());
                         current_upper_fence.truncate(node.prefix().len());
                         current_upper_fence.extend_from_slice(s.key(node.as_bytes()).0);
-                        self.validate(node.get_child(i), &current_lower_fence, &current_upper_fence);
+                        self.validate(
+                            node.get_child(i),
+                            &current_lower_fence,
+                            &current_upper_fence,
+                        );
                         std::mem::swap(&mut current_lower_fence, &mut current_upper_fence);
                     }
                     self.validate(node.upper(), &current_lower_fence, upper_fence);
                 }
             }
+            BTreeNodeTag::HeadTruncatedInner => todo!(),
+            BTreeNodeTag::HeadTruncatedLeaf => todo!(),
         }
     }
 }
@@ -118,6 +143,18 @@ pub unsafe extern "C" fn btree_lookup(
         BTreeNodeTag::BasicLeaf => {
             let node = &node.basic;
             let (index, found) = node.lower_bound(key);
+            if found {
+                let slice = node.slots()[index].value(node.as_bytes());
+                ptr::write(payload_len_out, slice.len() as u64);
+                slice.as_ptr()
+            } else {
+                ptr::null()
+            }
+        }
+        BTreeNodeTag::HeadTruncatedInner => unreachable!(),
+        BTreeNodeTag::HeadTruncatedLeaf => {
+            let node = &node.head_truncated;
+            let (index, found) = node.lower_bound(PrefixTruncatedKey(&key[node.prefix_len()..]));
             if found {
                 let slice = node.slots()[index].value(node.as_bytes());
                 ptr::write(payload_len_out, slice.len() as u64);
@@ -164,3 +201,9 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
     drop(Box::<BTree>::from_raw(b_tree));
 }
+
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
+pub struct PrefixTruncatedKey<'a>(pub &'a [u8]);
+
+#[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
+pub struct HeadTruncatedKey<'a>(pub &'a [u8]);
