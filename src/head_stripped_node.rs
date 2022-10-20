@@ -466,8 +466,7 @@ impl HeadStrippedNode {
         let prefix_truncated_separator = PrefixTruncatedKey(&separator.prefix_truncated_key);
         let full_sep_key_len = prefix_truncated_separator.0.len() + self.head.prefix_len as usize;
         debug_assert_eq!(full_separator.len(), full_sep_key_len);
-        let space_needed_parent =
-            parent.space_needed(full_sep_key_len, size_of::<*mut BTreeNode>());
+        let space_needed_parent = parent.space_needed(full_sep_key_len);
         parent.request_space(space_needed_parent)?;
         let node_left_raw = BTreeNode::alloc();
         let node_left = unsafe {
@@ -486,11 +485,7 @@ impl HeadStrippedNode {
             self.head.prefix_len,
         );
         let success = parent
-            .insert(
-                PrefixTruncatedKey(&full_separator),
-                0,
-                &(node_left_raw as usize).to_ne_bytes(),
-            )
+            .insert_child(PrefixTruncatedKey(&full_separator), 0, node_left_raw)
             .is_ok();
         debug_assert!(success);
         if self.head.tag.is_leaf() {
@@ -593,46 +588,27 @@ impl HeadStrippedNode {
 
     pub fn merge_right_leaf(
         &mut self,
-        right: &mut Self,
-        separator: PrefixTruncatedKey,
-        separator_prefix_len: usize,
+        _right: &mut Self,
+        _separator: PrefixTruncatedKey,
+        _separator_prefix_len: usize,
     ) -> Result<(), ()> {
         return Err(());
-        /*let mut tmp = HeadStrippedNode::new_leaf();
-        let new_prefix_len = self.head.prefix_len.min(right.head.prefix_len) as usize;
-        let self_prefix_shrinkage = self.head.prefix_len as usize - new_prefix_len;
-        let self_prefix_shrinkage = self.head.prefix_len as usize - new_prefix_len;
-        tmp.set_fences(self.fence(false), right.fence(true));
-        let left_grow = (self.head.prefix_len - tmp.head.prefix_len) * self.head.count;
-        let right_grow = (right.head.prefix_len - tmp.head.prefix_len) * right.head.count;
-        let space_upper_bound =
-            self.head.space_used as usize + right.head.space_used as usize + size_of::<BasicNodeHead>()
-                + size_of::<BasicSlot>() * (self.head.count + right.head.count) as usize + left_grow as usize + right_grow as usize;
-        if space_upper_bound > PAGE_SIZE {
-            return Err(());
-        }
-        self.copy_key_value_range(self.slots(), &mut tmp);
-        right.copy_key_value_range(right.slots(), &mut tmp);
-        tmp.make_hint();
-        tmp.validate();
-        *right = tmp;
-        return Ok(());*/
     }
 
     pub fn merge_right_inner(
         &mut self,
-        right: &mut Self,
-        separator: PrefixTruncatedKey,
-        separator_prefix_len: usize,
+        _right: &mut Self,
+        _separator: PrefixTruncatedKey,
+        _separator_prefix_len: usize,
     ) -> Result<(), ()> {
         todo!();
     }
 
-    pub fn remove_slot(&mut self, index: usize) {
+    pub fn remove_slot(&mut self, _index: usize) {
         todo!()
     }
 
-    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
+    pub fn remove(&mut self, _key: &[u8]) -> Option<()> {
         todo!()
     }
 

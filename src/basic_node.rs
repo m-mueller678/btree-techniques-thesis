@@ -1,4 +1,5 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
+use crate::find_separator::find_separator;
 use crate::util::{common_prefix_len, head, short_slice, trailing_bytes};
 use crate::PrefixTruncatedKey;
 use std::mem::{size_of, transmute};
@@ -399,7 +400,7 @@ impl BasicNode {
         sep_key_buffer[self.prefix().len()..][..truncated_sep_key.0.len()]
             .copy_from_slice(truncated_sep_key.0);
         let sep_key = &sep_key_buffer[..truncated_sep_key.0.len() + self.prefix().len()];
-        let space_needed_parent = parent.space_needed(sep_key.len(), size_of::<*mut BTreeNode>());
+        let space_needed_parent = parent.space_needed(sep_key.len());
         parent.request_space(space_needed_parent)?;
         let node_left_raw = BTreeNode::alloc();
         let node_left = unsafe {
@@ -410,11 +411,7 @@ impl BasicNode {
         let mut node_right = Self::new(self.head.tag.is_leaf());
         node_right.set_fences(sep_key, self.fence(true));
         let success = parent
-            .insert(
-                PrefixTruncatedKey(sep_key),
-                0,
-                &(node_left_raw as usize).to_ne_bytes(),
-            )
+            .insert_child(PrefixTruncatedKey(sep_key), 0, node_left_raw)
             .is_ok();
         debug_assert!(success);
         if self.head.tag.is_leaf() {
@@ -435,39 +432,11 @@ impl BasicNode {
 
     /// returns slot_id and prefix truncated separator
     fn find_separator(&self) -> (usize, PrefixTruncatedKey) {
-        let k = |i: usize| self.slots()[i].key(self.as_bytes()).0;
-
-        debug_assert!(self.head.count > 1);
-        if self.head.tag.is_inner() {
-            // inner nodes are split in the middle
-            // do not truncate separator to retain fence keys in children
-            let slot_id = self.head.count as usize / 2;
-            return (slot_id, self.slots()[slot_id].key(self.as_bytes()));
-        }
-
-        let best_slot = if self.head.count >= 16 {
-            let lower = (self.head.count as usize / 2) - (self.head.count as usize / 16);
-            let upper = self.head.count as usize / 2;
-            let best_prefix_len = common_prefix_len(k(0), k(lower));
-            (lower + 1..=upper)
-                .rev()
-                .find(|&i| common_prefix_len(k(0), k(i)) == best_prefix_len)
-                .unwrap_or(lower)
-        } else {
-            (self.head.count as usize - 1) / 2
-        };
-
-        // try to truncate separator
-        if best_slot + 1 < self.slots().len() {
-            let common = common_prefix_len(k(best_slot), k(best_slot + 1));
-            if k(best_slot).len() > common && k(best_slot + 1).len() > common + 1 {
-                return (
-                    best_slot,
-                    PrefixTruncatedKey(&k(best_slot + 1)[..common + 1]),
-                );
-            }
-        }
-        (best_slot, PrefixTruncatedKey(k(best_slot)))
+        find_separator(
+            self.head.count as usize,
+            self.head.tag.is_leaf(),
+            |i: usize| self.slots()[i].key(self.as_bytes()),
+        )
     }
 
     pub fn print_slots(&self) {

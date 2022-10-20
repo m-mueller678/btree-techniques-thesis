@@ -5,6 +5,8 @@ use std::{ptr, slice};
 
 pub mod basic_node;
 pub mod btree_node;
+mod find_separator;
+pub mod hash_leaf;
 pub mod head_stripped_node;
 pub mod util;
 
@@ -48,6 +50,14 @@ impl BTree {
                     self.split_node(node, parent, key);
                     self.insert(key, payload);
                 }
+                BTreeNodeTag::HashLeaf => {
+                    if node.hash_leaf.insert(key, payload).is_ok() {
+                        return;
+                    }
+                    // node is full: split and restart
+                    self.split_node(node, parent, key);
+                    self.insert(key, payload);
+                }
             }
         }
     }
@@ -64,6 +74,7 @@ impl BTree {
             BTreeNodeTag::HeadTruncatedLeaf | BTreeNodeTag::HeadTruncatedInner => {
                 (*node).head_truncated.split_node(&mut *parent, key)
             }
+            BTreeNodeTag::HashLeaf => (&mut *node).hash_leaf.split_node(&mut *parent, key),
         };
         self.validate(self.root, &[], &[]);
         if success.is_err() {
@@ -108,6 +119,7 @@ impl BTree {
             }
             BTreeNodeTag::HeadTruncatedInner => todo!(),
             BTreeNodeTag::HeadTruncatedLeaf => todo!(),
+            BTreeNodeTag::HashLeaf => todo!(),
         }
     }
 }
@@ -159,6 +171,14 @@ pub unsafe extern "C" fn btree_lookup(
                 let slice = node.slots()[index].value(node.as_bytes());
                 ptr::write(payload_len_out, slice.len() as u64);
                 slice.as_ptr()
+            } else {
+                ptr::null()
+            }
+        }
+        BTreeNodeTag::HashLeaf => {
+            if let Some(val) = node.hash_leaf.lookup(key) {
+                *payload_len_out = val.len() as u64;
+                val.as_ptr()
             } else {
                 ptr::null()
             }
