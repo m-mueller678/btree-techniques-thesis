@@ -1,6 +1,5 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::head_stripped_node::HeadStrippedNode;
 use crate::PrefixTruncatedKey;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::mem::{size_of, ManuallyDrop};
@@ -13,8 +12,6 @@ pub const PAGE_SIZE: usize = 4096;
 pub enum BTreeNodeTag {
     BasicLeaf,
     BasicInner,
-    HeadTruncatedLeaf,
-    HeadTruncatedInner,
     HashLeaf,
 }
 
@@ -23,8 +20,6 @@ impl BTreeNodeTag {
         match self {
             BTreeNodeTag::BasicLeaf => true,
             BTreeNodeTag::BasicInner => false,
-            BTreeNodeTag::HeadTruncatedLeaf => true,
-            BTreeNodeTag::HeadTruncatedInner => false,
             BTreeNodeTag::HashLeaf => true,
         }
     }
@@ -38,7 +33,6 @@ impl BTreeNodeTag {
 pub union BTreeNode {
     pub raw_bytes: [u8; PAGE_SIZE],
     pub basic: BasicNode,
-    pub head_truncated: HeadStrippedNode,
     pub hash_leaf: ManuallyDrop<HashLeaf>,
 }
 
@@ -62,15 +56,6 @@ impl BTreeNode {
                     index = self.basic.lower_bound(key).0;
                     parent = self;
                     self = &mut *self.basic.get_child(index);
-                },
-                BTreeNodeTag::HeadTruncatedLeaf => break,
-                BTreeNodeTag::HeadTruncatedInner => unsafe {
-                    index = self
-                        .head_truncated
-                        .lower_bound(PrefixTruncatedKey(&key[self.head_truncated.prefix_len()..]))
-                        .0;
-                    parent = self;
-                    self = &mut *self.head_truncated.get_child(index);
                 },
                 BTreeNodeTag::HashLeaf => break,
             }
@@ -99,51 +84,33 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
-            (*leaf).head_truncated = HeadStrippedNode::new_inner(child);
+            (*leaf).basic = BasicNode::new_inner(child);
             leaf
         }
     }
 
-    pub fn space_needed(&self, key_length: usize) -> usize {
+    /// on success returns prefix length of node
+    /// insert should be called with a string truncated to that length
+    pub fn request_space(&mut self, key_length: usize) -> Result<usize, ()> {
         match self.tag() {
-            BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf | BTreeNodeTag::HeadTruncatedLeaf => {
-                unreachable!()
-            }
-            BTreeNodeTag::BasicInner => {
-                BasicNode::space_needed(key_length, size_of::<*mut BTreeNode>())
-            }
-            BTreeNodeTag::HeadTruncatedInner => unsafe {
-                self.head_truncated
-                    .space_needed(key_length, size_of::<*mut BTreeNode>())
+            BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => unreachable!(),
+            BTreeNodeTag::BasicInner => unsafe {
+                self.basic.request_space(BasicNode::space_needed(
+                    key_length,
+                    size_of::<*mut BTreeNode>(),
+                ))
             },
         }
     }
 
-    pub fn request_space(&mut self, space: usize) -> Result<(), ()> {
+    /// key must be truncated to length returned from request_space
+    pub fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) {
         match self.tag() {
-            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.request_space(space) },
-            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
-                self.basic.request_space(space)
+            BTreeNodeTag::BasicInner => unsafe {
+                self.basic
+                    .raw_insert(index, key, &(child as usize).to_ne_bytes())
             },
-            BTreeNodeTag::HeadTruncatedInner | BTreeNodeTag::HeadTruncatedLeaf => unsafe {
-                self.head_truncated.request_space(space)
-            },
-        }
-    }
-
-    pub fn insert_child(
-        &mut self,
-        key: PrefixTruncatedKey,
-        prefix_len: usize,
-        child: *mut BTreeNode,
-    ) -> Result<(), ()> {
-        match self.tag() {
-            BTreeNodeTag::BasicInner => unimplemented!(),
-            BTreeNodeTag::HeadTruncatedInner => unsafe {
-                self.head_truncated
-                    .insert(key, prefix_len, &(child as usize).to_ne_bytes())
-            },
-            BTreeNodeTag::HashLeaf | BTreeNodeTag::HeadTruncatedLeaf | BTreeNodeTag::BasicLeaf => {
+            BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => {
                 unreachable!()
             }
         }
@@ -153,9 +120,6 @@ impl BTreeNode {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
                 self.basic.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
-            },
-            BTreeNodeTag::HeadTruncatedInner | BTreeNodeTag::HeadTruncatedLeaf => unsafe {
-                self.head_truncated.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
             },
             BTreeNodeTag::HashLeaf => unsafe {
                 self.hash_leaf.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
@@ -167,10 +131,6 @@ impl BTreeNode {
         match self.tag() {
             BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
             BTreeNodeTag::BasicLeaf => panic!(),
-            BTreeNodeTag::HeadTruncatedInner => unsafe {
-                self.head_truncated.merge_children_check(child_index)
-            },
-            BTreeNodeTag::HeadTruncatedLeaf => unreachable!(),
             BTreeNodeTag::HashLeaf => unreachable!(),
         }
     }
@@ -189,8 +149,6 @@ impl BTreeNode {
                     .merge_right_inner(&mut (*right).basic, separator, separator_prefix_len)
             }
             BTreeNodeTag::BasicLeaf => self.basic.merge_right_leaf(&mut (*right).basic),
-            BTreeNodeTag::HeadTruncatedInner => todo!(),
-            BTreeNodeTag::HeadTruncatedLeaf => todo!(),
             BTreeNodeTag::HashLeaf => todo!(),
         }
     }
@@ -198,9 +156,6 @@ impl BTreeNode {
     pub fn remove(&mut self, key: &[u8]) -> Option<()> {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.remove(key) },
-            BTreeNodeTag::HeadTruncatedInner | BTreeNodeTag::HeadTruncatedLeaf => unsafe {
-                self.head_truncated.remove(key)
-            },
             BTreeNodeTag::HashLeaf => {
                 todo!()
             }

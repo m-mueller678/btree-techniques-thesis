@@ -1,5 +1,5 @@
 use crate::find_separator::find_separator;
-use crate::util::{common_prefix_len, short_slice};
+use crate::util::{common_prefix_len, partial_restore, short_slice};
 use crate::{BTreeNode, BTreeNodeTag, PrefixTruncatedKey, PAGE_SIZE};
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
@@ -256,7 +256,16 @@ impl HashLeaf {
         }
     }
 
-    pub fn split_node(&mut self, parent: &mut BTreeNode, _key_in_self: &[u8]) -> Result<(), ()> {
+    fn prefix<'a>(&self, key_in_node: &'a [u8]) -> &'a [u8] {
+        &key_in_node[..self.head.prefix_len as usize]
+    }
+
+    pub fn split_node(
+        &mut self,
+        parent: &mut BTreeNode,
+        key_in_self: &[u8],
+        index_in_parent: usize,
+    ) -> Result<(), ()> {
         {
             //sort
             let this = self as *mut Self as *mut u8;
@@ -278,8 +287,7 @@ impl HashLeaf {
                 self.slots()[i].key(self.as_bytes())
             });
         let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
-        let space_needed_parent = parent.space_needed(full_sep_key_len);
-        parent.request_space(space_needed_parent)?;
+        let parent_prefix_len = parent.request_space(full_sep_key_len)?;
         let node_left_raw = BTreeNode::alloc();
         let node_left = unsafe {
             (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
@@ -288,14 +296,13 @@ impl HashLeaf {
         node_left.set_fences(self.fence(false), truncated_sep_key, self.head.prefix_len);
         let mut node_right = Self::new();
         node_right.set_fences(truncated_sep_key, self.fence(true), self.head.prefix_len);
-        let success = parent
-            .insert_child(
-                truncated_sep_key,
-                self.head.prefix_len as usize,
-                node_left_raw,
-            )
-            .is_ok();
-        debug_assert!(success);
+        let parent_sep = partial_restore(
+            0,
+            &[self.prefix(key_in_self), truncated_sep_key.0],
+            parent_prefix_len,
+        );
+        let parent_sep = PrefixTruncatedKey(&parent_sep);
+        parent.insert_child(index_in_parent, parent_sep, node_left_raw);
         if self.head.tag.is_leaf() {
             self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
             self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);

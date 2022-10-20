@@ -1,4 +1,5 @@
 use crate::{HeadTruncatedKey, PrefixTruncatedKey};
+use smallvec::SmallVec;
 
 pub fn head(key: PrefixTruncatedKey) -> (u32, HeadTruncatedKey) {
     let mut k_padded = [0u8; 4];
@@ -21,3 +22,24 @@ pub fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
 pub fn trailing_bytes(b: &[u8], count: usize) -> &[u8] {
     &b[b.len() - count..]
 }
+
+pub fn partial_restore(
+    old_prefix_len: usize,
+    segments: &[&[u8]],
+    new_prefix_len: usize,
+) -> SmallBuff {
+    debug_assert!(old_prefix_len <= new_prefix_len);
+    let prefix_growth = new_prefix_len - old_prefix_len;
+    let total_len = segments.iter().map(|s| s.len()).sum::<usize>() + old_prefix_len;
+    let mut buffer = SmallBuff::with_capacity(total_len - new_prefix_len);
+    let mut strip_amount = prefix_growth;
+    for segment in segments {
+        let strip_now = strip_amount.min(segment.len());
+        strip_amount -= strip_now;
+        buffer.extend_from_slice(&segment[strip_now..]);
+    }
+    debug_assert!(buffer.len() + new_prefix_len == total_len);
+    buffer
+}
+
+pub type SmallBuff = SmallVec<[u8; 32]>;

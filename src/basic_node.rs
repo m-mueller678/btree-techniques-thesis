@@ -1,6 +1,6 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::util::{common_prefix_len, head, short_slice, trailing_bytes};
+use crate::util::{common_prefix_len, head, partial_restore, short_slice, trailing_bytes};
 use crate::PrefixTruncatedKey;
 use std::mem::{size_of, transmute};
 use std::{mem, ptr};
@@ -217,19 +217,25 @@ impl BasicNode {
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
         self.request_space(Self::space_needed(key.len(), payload.len()))?;
         let (slot_id, _) = self.lower_bound(key);
+        let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
+        self.raw_insert(slot_id, key, payload);
+        Ok(())
+    }
+
+    pub fn raw_insert(&mut self, slot_id: usize, key: PrefixTruncatedKey, payload: &[u8]) {
+        debug_assert!(slot_id == 0 || self.slots()[slot_id - 1].key(self.as_bytes()) < key);
+        debug_assert!(
+            slot_id + 1 >= self.head.count as usize
+                || self.slots()[slot_id + 1].key(self.as_bytes()) > key
+        );
         self.head.count += 1;
         self.assert_no_collide();
         let count = self.head.count as usize;
         self.slots_mut()
             .copy_within(slot_id..count - 1, slot_id + 1);
-        self.store_key_value(
-            slot_id,
-            PrefixTruncatedKey(&key[self.head.prefix_len as usize..]),
-            payload,
-        );
+        self.store_key_value(slot_id, key, payload);
         self.update_hint(slot_id);
         self.validate();
-        Ok(())
     }
 
     fn free_space(&self) -> usize {
@@ -245,12 +251,12 @@ impl BasicNode {
             - self.slots().len() * size_of::<BasicSlot>()
     }
 
-    pub fn request_space(&mut self, space: usize) -> Result<(), ()> {
+    pub fn request_space(&mut self, space: usize) -> Result<usize, ()> {
         if space <= self.free_space() {
-            Ok(())
+            Ok(self.head.prefix_len as usize)
         } else if space <= self.free_space_after_compaction() {
             self.compactify();
-            Ok(())
+            Ok(self.head.prefix_len as usize)
         } else {
             Err(())
         }
@@ -392,28 +398,22 @@ impl BasicNode {
         key_length + payload_length + size_of::<BasicSlot>()
     }
 
-    pub fn split_node(&mut self, parent: &mut BTreeNode) -> Result<(), ()> {
+    pub fn split_node(&mut self, parent: &mut BTreeNode, index_in_parent: usize) -> Result<(), ()> {
         // split
         let (sep_slot, truncated_sep_key) = self.find_separator();
-        let mut sep_key_buffer = [0; PAGE_SIZE / 4];
-        sep_key_buffer[..self.prefix().len()].copy_from_slice(self.prefix());
-        sep_key_buffer[self.prefix().len()..][..truncated_sep_key.0.len()]
-            .copy_from_slice(truncated_sep_key.0);
-        let sep_key = &sep_key_buffer[..truncated_sep_key.0.len() + self.prefix().len()];
-        let space_needed_parent = parent.space_needed(sep_key.len());
-        parent.request_space(space_needed_parent)?;
+        let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
+        let parent_prefix_len = parent.request_space(full_sep_key_len)?;
+        let full_sep = partial_restore(0, &[self.prefix(), truncated_sep_key.0], 0);
+        let parent_sep = PrefixTruncatedKey(&full_sep[parent_prefix_len..]);
         let node_left_raw = BTreeNode::alloc();
         let node_left = unsafe {
             (*node_left_raw).basic = Self::new(self.head.tag.is_leaf());
             &mut (*node_left_raw).basic
         };
-        node_left.set_fences(self.fence(false), sep_key);
+        node_left.set_fences(self.fence(false), &full_sep);
         let mut node_right = Self::new(self.head.tag.is_leaf());
-        node_right.set_fences(sep_key, self.fence(true));
-        let success = parent
-            .insert_child(PrefixTruncatedKey(sep_key), 0, node_left_raw)
-            .is_ok();
-        debug_assert!(success);
+        node_right.set_fences(&full_sep, self.fence(true));
+        parent.insert_child(index_in_parent, parent_sep, node_left_raw);
         if self.head.tag.is_leaf() {
             self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
             self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);

@@ -7,7 +7,6 @@ pub mod basic_node;
 pub mod btree_node;
 mod find_separator;
 pub mod hash_leaf;
-pub mod head_stripped_node;
 pub mod util;
 
 pub struct BTree {
@@ -25,7 +24,7 @@ impl BTree {
     fn insert(&mut self, key: &[u8], payload: &[u8]) {
         assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
         unsafe {
-            let (node, parent, _) = (&mut *self.root).descend(key, |_| false);
+            let (node, parent, pos) = (&mut *self.root).descend(key, |_| false);
             let node = &mut *node;
             match node.tag() {
                 BTreeNodeTag::BasicInner => unreachable!(),
@@ -34,20 +33,7 @@ impl BTree {
                         return;
                     }
                     // node is full: split and restart
-                    self.split_node(node, parent, key);
-                    self.insert(key, payload);
-                }
-                BTreeNodeTag::HeadTruncatedInner => unreachable!(),
-                BTreeNodeTag::HeadTruncatedLeaf => {
-                    if node
-                        .head_truncated
-                        .insert(PrefixTruncatedKey(key), 0, payload)
-                        .is_ok()
-                    {
-                        return;
-                    }
-                    // node is full: split and restart
-                    self.split_node(node, parent, key);
+                    self.split_node(node, parent, key, pos);
                     self.insert(key, payload);
                 }
                 BTreeNodeTag::HashLeaf => {
@@ -55,26 +41,33 @@ impl BTree {
                         return;
                     }
                     // node is full: split and restart
-                    self.split_node(node, parent, key);
+                    self.split_node(node, parent, key, pos);
                     self.insert(key, payload);
                 }
             }
         }
     }
 
-    unsafe fn split_node(&mut self, node: *mut BTreeNode, mut parent: *mut BTreeNode, key: &[u8]) {
+    unsafe fn split_node(
+        &mut self,
+        node: *mut BTreeNode,
+        mut parent: *mut BTreeNode,
+        key: &[u8],
+        index_in_parent: usize,
+    ) {
         if parent.is_null() {
             parent = BTreeNode::new_inner(node);
             self.root = parent;
         }
         let success = match (*node).tag() {
             BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
-                (*node).basic.split_node(&mut *parent)
+                (*node).basic.split_node(&mut *parent, index_in_parent)
             }
-            BTreeNodeTag::HeadTruncatedLeaf | BTreeNodeTag::HeadTruncatedInner => {
-                (*node).head_truncated.split_node(&mut *parent, key)
+            BTreeNodeTag::HashLeaf => {
+                (&mut *node)
+                    .hash_leaf
+                    .split_node(&mut *parent, key, index_in_parent)
             }
-            BTreeNodeTag::HashLeaf => (&mut *node).hash_leaf.split_node(&mut *parent, key),
         };
         self.validate(self.root, &[], &[]);
         if success.is_err() {
@@ -83,9 +76,9 @@ impl BTree {
     }
 
     unsafe fn ensure_space(&mut self, to_split: *mut BTreeNode, key: &[u8]) {
-        let (node, parent, _) = (*self.root).descend(key, |n| n == to_split);
+        let (node, parent, pos) = (*self.root).descend(key, |n| n == to_split);
         debug_assert!(node == to_split);
-        self.split_node(to_split, parent, key);
+        self.split_node(to_split, parent, key, pos);
     }
 
     unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
@@ -117,8 +110,6 @@ impl BTree {
                     self.validate(node.upper(), &current_lower_fence, upper_fence);
                 }
             }
-            BTreeNodeTag::HeadTruncatedInner => todo!(),
-            BTreeNodeTag::HeadTruncatedLeaf => todo!(),
             BTreeNodeTag::HashLeaf => todo!(),
         }
     }
@@ -155,18 +146,6 @@ pub unsafe extern "C" fn btree_lookup(
         BTreeNodeTag::BasicLeaf => {
             let node = &node.basic;
             let (index, found) = node.lower_bound(key);
-            if found {
-                let slice = node.slots()[index].value(node.as_bytes());
-                ptr::write(payload_len_out, slice.len() as u64);
-                slice.as_ptr()
-            } else {
-                ptr::null()
-            }
-        }
-        BTreeNodeTag::HeadTruncatedInner => unreachable!(),
-        BTreeNodeTag::HeadTruncatedLeaf => {
-            let node = &node.head_truncated;
-            let (index, found) = node.lower_bound(PrefixTruncatedKey(&key[node.prefix_len()..]));
             if found {
                 let slice = node.slots()[index].value(node.as_bytes());
                 ptr::write(payload_len_out, slice.len() as u64);
