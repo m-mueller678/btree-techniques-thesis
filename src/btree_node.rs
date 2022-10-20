@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::PrefixTruncatedKey;
+use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::mem::{size_of, ManuallyDrop};
 use std::{mem, ptr};
@@ -53,7 +53,7 @@ impl BTreeNode {
             match self.tag() {
                 BTreeNodeTag::BasicLeaf => break,
                 BTreeNodeTag::BasicInner => unsafe {
-                    index = self.basic.lower_bound(key).0;
+                    index = self.basic.lower_bound(self.basic.truncate(key)).0;
                     parent = self;
                     self = &mut *self.basic.get_child(index);
                 },
@@ -91,14 +91,14 @@ impl BTreeNode {
 
     /// on success returns prefix length of node
     /// insert should be called with a string truncated to that length
-    pub fn request_space(&mut self, key_length: usize) -> Result<usize, ()> {
+    pub fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
         match self.tag() {
             BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => unreachable!(),
             BTreeNodeTag::BasicInner => unsafe {
-                self.basic.request_space(BasicNode::space_needed(
-                    key_length,
-                    size_of::<*mut BTreeNode>(),
-                ))
+                self.basic.request_space(
+                    self.basic
+                        .space_needed(key_length, size_of::<*mut BTreeNode>()),
+                )
             },
         }
     }
@@ -138,17 +138,18 @@ impl BTreeNode {
     pub unsafe fn try_merge_right(
         &mut self,
         right: *mut BTreeNode,
-        separator: PrefixTruncatedKey,
-        separator_prefix_len: usize,
+        separator: FatTruncatedKey,
     ) -> Result<(), ()> {
         debug_assert!((*right).tag() == self.tag());
         debug_assert!(right != self);
         match self.tag() {
             BTreeNodeTag::BasicInner => {
-                self.basic
-                    .merge_right_inner(&mut (*right).basic, separator, separator_prefix_len)
+                self.basic.merge_right(true, &mut (*right).basic, separator)
             }
-            BTreeNodeTag::BasicLeaf => self.basic.merge_right_leaf(&mut (*right).basic),
+            BTreeNodeTag::BasicLeaf => {
+                self.basic
+                    .merge_right(false, &mut (*right).basic, separator)
+            }
             BTreeNodeTag::HashLeaf => todo!(),
         }
     }

@@ -61,12 +61,12 @@ impl BTree {
         }
         let success = match (*node).tag() {
             BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
-                (*node).basic.split_node(&mut *parent, index_in_parent)
+                (*node).basic.split_node(&mut *parent, index_in_parent, key)
             }
             BTreeNodeTag::HashLeaf => {
                 (&mut *node)
                     .hash_leaf
-                    .split_node(&mut *parent, key, index_in_parent)
+                    .split_node(&mut *parent, index_in_parent, key)
             }
         };
         self.validate(self.root, &[], &[]);
@@ -81,37 +81,9 @@ impl BTree {
         self.split_node(to_split, parent, key, pos);
     }
 
+    #[allow(unused_variables)]
     unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
         return;
-        if !cfg!(debug_assertions) {
-            return;
-        }
-        let tag = (*node).tag();
-        match tag {
-            BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
-                let node = &(*node).basic;
-                node.validate();
-                assert_eq!(node.fence(false), lower_fence);
-                assert_eq!(node.fence(true), upper_fence);
-                if tag.is_inner() {
-                    let mut current_lower_fence = lower_fence.to_vec();
-                    let mut current_upper_fence = current_lower_fence.clone();
-                    for (i, s) in node.slots().iter().enumerate() {
-                        assert!(current_upper_fence.len() >= node.prefix().len());
-                        current_upper_fence.truncate(node.prefix().len());
-                        current_upper_fence.extend_from_slice(s.key(node.as_bytes()).0);
-                        self.validate(
-                            node.get_child(i),
-                            &current_lower_fence,
-                            &current_upper_fence,
-                        );
-                        std::mem::swap(&mut current_lower_fence, &mut current_upper_fence);
-                    }
-                    self.validate(node.upper(), &current_lower_fence, upper_fence);
-                }
-            }
-            BTreeNodeTag::HashLeaf => todo!(),
-        }
     }
 }
 
@@ -145,7 +117,7 @@ pub unsafe extern "C" fn btree_lookup(
         BTreeNodeTag::BasicInner => unreachable!(),
         BTreeNodeTag::BasicLeaf => {
             let node = &node.basic;
-            let (index, found) = node.lower_bound(key);
+            let (index, found) = node.lower_bound(node.truncate(key));
             if found {
                 let slice = node.slots()[index].value(node.as_bytes());
                 ptr::write(payload_len_out, slice.len() as u64);
@@ -206,3 +178,18 @@ pub struct PrefixTruncatedKey<'a>(pub &'a [u8]);
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub struct HeadTruncatedKey<'a>(pub &'a [u8]);
+
+#[derive(Copy, Clone, Debug)]
+pub struct FatTruncatedKey<'a> {
+    prefix_len: usize,
+    remainder: &'a [u8],
+}
+
+impl<'a> FatTruncatedKey<'a> {
+    pub fn full(key: &'a [u8]) -> Self {
+        FatTruncatedKey {
+            prefix_len: 0,
+            remainder: key,
+        }
+    }
+}
