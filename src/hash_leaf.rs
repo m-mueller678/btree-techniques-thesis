@@ -71,7 +71,8 @@ impl HashLeaf {
     fn layout(count: usize) -> LayoutInfo {
         debug_assert!(SLOTS_FIRST);
         let slots_start = size_of::<HashLeafHead>();
-        let hash_start = (slots_start + size_of::<HashSlot>() * count).next_multiple_of(SIMD_ALIGN);
+        let hash_start = (slots_start + size_of::<HashSlot>() * count);
+        let hash_start = if USE_SIMD { hash_start.next_multiple_of(SIMD_ALIGN) } else { hash_start };
         let data_start = hash_start + count;
         LayoutInfo {
             slots_start,
