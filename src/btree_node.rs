@@ -55,6 +55,7 @@ impl BTreeNode {
                 BTreeNodeTag::BasicInner => unsafe {
                     index = self.basic.lower_bound(self.basic.truncate(key)).0;
                     parent = self;
+                    // eprintln!("descend {}",index);
                     self = &mut *self.basic.get_child(index);
                 },
                 BTreeNodeTag::HashLeaf => break,
@@ -135,6 +136,8 @@ impl BTreeNode {
         }
     }
 
+    /// merge into right,
+    ///self is discarded after this
     pub unsafe fn try_merge_right(
         &mut self,
         right: *mut BTreeNode,
@@ -150,16 +153,21 @@ impl BTreeNode {
                 self.basic
                     .merge_right(false, &mut (*right).basic, separator)
             }
-            BTreeNodeTag::HashLeaf => todo!(),
+            BTreeNodeTag::HashLeaf => self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator),
+        }
+    }
+
+    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        match self.tag() {
+            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.validate_tree(lower, upper) },
+            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.validate_tree(lower, upper) }
         }
     }
 
     pub fn remove(&mut self, key: &[u8]) -> Option<()> {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.remove(key) },
-            BTreeNodeTag::HashLeaf => {
-                todo!()
-            }
+            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.remove(key) }
         }
     }
 }

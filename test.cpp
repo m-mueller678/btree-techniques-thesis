@@ -75,6 +75,7 @@ void runTest(BenchmarkParameters parameters, vector<string> &data) {
 }
 
 int main() {
+    srand(0x1a2b3c4d);
     vector<string> data;
     BenchmarkParameters parameters;
 

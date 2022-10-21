@@ -1,6 +1,6 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::util::{common_prefix_len, head, partial_restore, short_slice, trailing_bytes};
+use crate::util::{common_prefix_len, head, merge_fences, partial_restore, short_slice, SmallBuff, trailing_bytes};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 use std::{mem, ptr};
@@ -93,6 +93,7 @@ impl BasicNode {
     }
 
     pub fn validate(&self) {
+        debug_assert!(self.fence(false) < self.fence(true) || self.fence(true).0.is_empty() && self.head.prefix_len == 0);
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
                 assert!(w[0].key(self.as_bytes()).0 <= w[1].key(self.as_bytes()).0);
@@ -219,8 +220,14 @@ impl BasicNode {
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
         self.request_space(self.space_needed(key.len(), payload.len()))?;
         let key = self.truncate(key);
-        let (slot_id, _) = self.lower_bound(key);
-        self.raw_insert(slot_id, key, payload);
+        let (slot_id, found) = self.lower_bound(key);
+        if found {
+            let s = &self.slots()[slot_id];
+            self.head.space_used -= s.key_len + s.val_len;
+            self.store_key_value(slot_id, key, payload);
+        } else {
+            self.raw_insert(slot_id, key, payload);
+        }
         Ok(())
     }
 
@@ -560,41 +567,13 @@ impl BasicNode {
         if space_upper_bound > PAGE_SIZE {
             return Err(());
         }
-        let mut tmp = BasicNode::new_leaf();
+        let mut tmp = BasicNode::new(self.head.tag.is_leaf());
+        tmp.head.upper = right.head.upper;
         if STRIP_PREFIX {
-            if self.head.prefix_len == right.head.prefix_len {
-                tmp.set_fences(self.fence(false), right.fence(true), self.head.prefix_len);
-            } else if self.head.prefix_len > right.head.prefix_len {
-                let lower = partial_restore(
-                    separator.prefix_len,
-                    &[
-                        &separator.remainder
-                            [..self.head.prefix_len as usize - separator.prefix_len],
-                        self.fence(false).0,
-                    ],
-                    right.head.prefix_len as usize,
-                );
-                tmp.set_fences(
-                    PrefixTruncatedKey(&lower),
-                    right.fence(true),
-                    right.head.prefix_len,
-                );
-            } else {
-                let upper = partial_restore(
-                    separator.prefix_len,
-                    &[
-                        &separator.remainder
-                            [..right.head.prefix_len as usize - separator.prefix_len],
-                        right.fence(false).0,
-                    ],
-                    self.head.prefix_len as usize,
-                );
-                tmp.set_fences(
-                    self.fence(false),
-                    PrefixTruncatedKey(&upper),
-                    self.head.prefix_len,
-                );
-            }
+            merge_fences(FatTruncatedKey { remainder: self.fence(false).0, prefix_len: self.head.prefix_len as usize },
+                         separator, FatTruncatedKey { remainder: right.fence(true).0, prefix_len: right.head.prefix_len as usize }, |lo, hi, p| {
+                    tmp.set_fences(lo, hi, p as u16);
+                });
         } else {
             tmp.set_fences(self.fence(false), right.fence(true), 0);
         }
@@ -617,7 +596,7 @@ impl BasicNode {
 
     pub fn remove_slot(&mut self, index: usize) {
         self.head.space_used -=
-            self.slots()[index].key_len - self.head.prefix_len + self.slots()[index].val_len;
+            self.slots()[index].key_len + self.slots()[index].val_len;
         let back_slots = &mut self.slots_mut()[index..];
         back_slots.copy_within(1.., 0);
         self.head.count -= 1;
@@ -636,5 +615,20 @@ impl BasicNode {
 
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
+    }
+
+    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(self.head.prefix_len as usize, common_prefix_len(lower, upper));
+        debug_assert_eq!(self.fence(false), if STRIP_PREFIX { self.truncate(&lower) } else { PrefixTruncatedKey(lower) });
+        debug_assert_eq!(self.fence(true), if STRIP_PREFIX { self.truncate(&upper) } else { PrefixTruncatedKey(upper) });
+        if self.head.tag.is_inner() {
+            let mut current_lower: SmallBuff = lower.into();
+            for (i, s) in self.slots().iter().enumerate() {
+                let current_upper = partial_restore(0, &[self.prefix(lower), s.key(self.as_bytes()).0], 0);
+                unsafe { &mut *self.get_child(i) }.validate_tree(&current_lower, &current_upper);
+                current_lower = current_upper;
+            }
+            unsafe { &mut *self.get_child(self.head.count as usize) }.validate_tree(&current_lower, upper);
+        }
     }
 }

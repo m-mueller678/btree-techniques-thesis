@@ -1,11 +1,12 @@
 use crate::find_separator::find_separator;
-use crate::util::{common_prefix_len, partial_restore, short_slice};
-use crate::{BTreeNode, BTreeNodeTag, PrefixTruncatedKey, PAGE_SIZE};
+use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
+use crate::{BTreeNode, BTreeNodeTag, PrefixTruncatedKey, PAGE_SIZE, FatTruncatedKey};
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 use std::io::Write;
 use std::mem::{size_of, transmute, ManuallyDrop};
 
+#[derive(Clone, Copy)]
 struct HashSlot {
     offset: u16,
     key_len: u16,
@@ -22,11 +23,13 @@ impl HashSlot {
     }
 }
 
+#[derive(Clone)]
 struct FenceKeySlot {
     offset: u16,
     len: u16,
 }
 
+#[derive(Clone)]
 #[repr(C)]
 struct HashLeafHead {
     tag: BTreeNodeTag,
@@ -38,6 +41,7 @@ struct HashLeafHead {
     prefix_len: u16,
 }
 
+#[derive(Clone)]
 #[repr(C)]
 pub struct HashLeaf {
     head: HashLeafHead,
@@ -53,8 +57,8 @@ struct LayoutInfo {
 const SLOTS_FIRST: bool = true;
 
 impl HashLeaf {
-    pub fn space_needed(key_length: usize, payload_length: usize) -> usize {
-        key_length + payload_length + size_of::<HashSlot>() + 1
+    pub fn space_needed(&self, key_length: usize, payload_length: usize) -> usize {
+        key_length - self.head.prefix_len as usize + payload_length + size_of::<HashSlot>() + 1
     }
 
     fn layout(count: usize) -> LayoutInfo {
@@ -135,22 +139,20 @@ impl HashLeaf {
     }
 
     fn compactify(&mut self) {
+        //eprintln!("{:?} compactify",self as *const Self);
         let mut buffer = [0u8; PAGE_SIZE];
         let fences_len = self.head.lower_fence.len as usize + self.head.upper_fence.len as usize;
         let new_data_offset = PAGE_SIZE - self.head.space_used as usize;
         let new_data_range = new_data_offset..PAGE_SIZE - fences_len;
         let mut write = &mut buffer[new_data_range.clone()];
         for i in 0..self.head.count as usize {
-            let s = &mut self.slots_mut()[i];
-            s.offset = (PAGE_SIZE - fences_len - write.len()) as u16;
-            write
-                .write_all(self.slots()[i].key(self.as_bytes()).0)
-                .unwrap();
-            write
-                .write_all(self.slots()[i].value(self.as_bytes()))
-                .unwrap();
+            let new_offset = (PAGE_SIZE - fences_len - write.len()) as u16;
+            debug_assert!(new_offset >= new_data_offset as u16);
+            write.write_all(self.slots()[i].key(self.as_bytes()).0).unwrap();
+            write.write_all(self.slots()[i].value(self.as_bytes())).unwrap();
+            self.slots_mut()[i].offset = new_offset;
         }
-        debug_assert!(write.len() == 0);
+        debug_assert!(write.is_empty());
         unsafe {
             self.as_bytes_mut()[new_data_range.clone()].copy_from_slice(&buffer[new_data_range])
         };
@@ -181,13 +183,28 @@ impl HashLeaf {
     }
 
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
-        self.request_space(Self::space_needed(key.len(), payload.len()))?;
-        self.increase_size(1);
-        self.store_key_value(
-            self.head.count as usize - 1,
-            PrefixTruncatedKey(&key[self.head.prefix_len as usize..]),
-            payload,
-        );
+        // self.print();
+        //eprintln!("{:?} insert {:?}",self as *const Self,key);
+        let key = self.truncate(key);
+        self.insert_truncated(key, payload)
+    }
+
+    fn insert_truncated(&mut self, key: PrefixTruncatedKey, payload: &[u8]) -> Result<(), ()> {
+        let index = if let Some(found) = self.find_index(key) {
+            let s = &mut self.slots_mut()[found];
+            let old_use = s.key_len + s.val_len;
+            s.key_len = 0;
+            s.val_len = 0;
+            self.head.space_used -= old_use;
+            self.request_space(key.0.len() + payload.len())?;
+            found
+        } else {
+            self.request_space(self.space_needed(key.0.len() + self.head.prefix_len as usize, payload.len()))?;
+            self.increase_size(1);
+            self.head.count as usize - 1
+        };
+        self.store_key_value(index, key, payload);
+        // self.print();
         self.validate();
         Ok(())
     }
@@ -267,6 +284,8 @@ impl HashLeaf {
         key_in_self: &[u8],
     ) -> Result<(), ()> {
         {
+            //eprintln!("### split");
+            // self.print();
             //sort
             let this = self as *mut Self as *mut u8;
             let count = self.head.count as usize;
@@ -309,6 +328,9 @@ impl HashLeaf {
         }
         node_left.validate();
         node_right.validate();
+        // node_left.print();
+        // node_right.print();
+        debug_assert_eq!(self.head.count, node_left.head.count + node_right.head.count);
         *self = node_right;
         Ok(())
     }
@@ -338,11 +360,15 @@ impl HashLeaf {
     }
 
     pub fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
-        let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
+        self.find_index(self.truncate(key)).map(|i| self.slots()[i].value(self.as_bytes()))
+    }
+
+    fn find_index(&self, key: PrefixTruncatedKey) -> Option<usize> {
         let needle_hash = Self::compute_hash(key);
+        //eprintln!("find {:?} -> {}",key,needle_hash);
         for (i, hash) in self.hashes().iter().enumerate() {
             if *hash == needle_hash && self.slots()[i].key(self.as_bytes()) == key {
-                return Some(self.slots()[i].value(self.as_bytes()));
+                return Some(i);
             }
         }
         None
@@ -350,8 +376,12 @@ impl HashLeaf {
 
     pub fn validate(&self) {
         self.assert_no_collide();
+        debug_assert!(self.fence(false) < self.fence(true) || self.fence(true).0.is_empty() && self.head.prefix_len == 0);
         for s in self.slots() {
             debug_assert!(s.offset >= self.head.data_offset);
+        }
+        for (s, h) in self.slots().iter().zip(self.hashes().iter()) {
+            debug_assert_eq!(Self::compute_hash(s.key(self.as_bytes())), *h);
         }
         debug_assert_eq!(
             self.head.space_used as usize,
@@ -360,8 +390,77 @@ impl HashLeaf {
                 + self
                 .slots()
                 .iter()
-                .map(|s| (s.val_len + s.key_len) as usize)
+                .map(|s| (s.key_len + s.val_len) as usize)
                 .sum::<usize>()
         );
+    }
+
+    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
+        //eprintln!("### {:?} remove {:?}",self as *const Self,key);
+        // self.print();
+
+        let index = self.find_index(self.truncate(key))?;
+        let new_count = self.head.count as usize - 1;
+        let last = new_count;
+        let slot = self.slots()[index];
+        self.head.space_used -= slot.key_len + slot.val_len;
+        if index < last {
+            let slots = self.slots_mut();
+            slots[index] = slots[last];
+            let hashes = self.hashes_mut();
+            hashes[index] = hashes[last];
+        }
+        assert!(SLOTS_FIRST);
+        let old_layout = Self::layout(new_count + 1);
+        let new_layout = Self::layout(new_count);
+        unsafe {
+            self.as_bytes_mut().copy_within(old_layout.hash_start..old_layout.hash_start + new_count, new_layout.hash_start);
+        }
+        debug_assert_eq!(old_layout.slots_start, new_layout.slots_start);
+        self.head.count -= 1;
+        self.validate();
+        // self.print();
+        Some(())
+    }
+
+    pub fn try_merge_right(&mut self, right: &mut Self, separator: FatTruncatedKey) -> Result<(), ()> {
+        //eprintln!("### {:?} merge right {:?}",self as *const Self,right as *const Self);
+        // self.print();
+        // right.print();
+        //TODO optimize
+        let mut tmp = Self::new();
+        merge_fences(FatTruncatedKey { remainder: self.fence(false).0, prefix_len: self.head.prefix_len as usize },
+                     separator, FatTruncatedKey { remainder: right.fence(true).0, prefix_len: right.head.prefix_len as usize }, |lo, hi, p| {
+                tmp.set_fences(lo, hi, p as u16);
+            });
+        let left = self.slots().iter().map(|s| (s, &*self));
+        let right_iter = right.slots().iter().map(|s| (s, &*right));
+        for (s, this) in left.chain(right_iter) {
+            let segments = &[&separator.remainder[..this.head.prefix_len as usize - separator.prefix_len], s.key(this.as_bytes()).0];
+            let reconstructed = partial_restore(separator.prefix_len, segments, tmp.head.prefix_len as usize);
+            tmp.insert_truncated(PrefixTruncatedKey(&reconstructed), s.value(this.as_bytes()))?;
+        }
+        tmp.validate();
+        // tmp.print();
+        debug_assert_eq!(tmp.head.count, self.head.count + right.head.count);
+        *right = tmp;
+        Ok(())
+    }
+
+    pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
+        PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
+    }
+
+    fn print(&self) {
+        eprintln!("HashLeaf {:?} [{:?}..], {:?} - {:?}", self as *const Self, self.head.prefix_len, self.fence(false).0, self.fence(true).0);
+        for (i, s) in self.slots().iter().enumerate() {
+            eprintln!("{:?}|{:3?}|{:3?}", i, self.hashes()[i], s.key(self.as_bytes()));
+        }
+    }
+
+    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(self.head.prefix_len as usize, common_prefix_len(lower, upper));
+        debug_assert_eq!(self.fence(false), self.truncate(&lower));
+        debug_assert_eq!(self.fence(true), self.truncate(&upper));
     }
 }

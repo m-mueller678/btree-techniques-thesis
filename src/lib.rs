@@ -30,6 +30,7 @@ impl BTree {
                 BTreeNodeTag::BasicInner => unreachable!(),
                 BTreeNodeTag::BasicLeaf => {
                     if node.basic.insert(key, payload).is_ok() {
+                        self.validate();
                         return;
                     }
                     // node is full: split and restart
@@ -38,6 +39,7 @@ impl BTree {
                 }
                 BTreeNodeTag::HashLeaf => {
                     if node.hash_leaf.insert(key, payload).is_ok() {
+                        self.validate();
                         return;
                     }
                     // node is full: split and restart
@@ -69,7 +71,7 @@ impl BTree {
                     .split_node(&mut *parent, index_in_parent, key)
             }
         };
-        self.validate(self.root, &[], &[]);
+        self.validate();
         if success.is_err() {
             self.ensure_space(parent, key);
         }
@@ -82,8 +84,12 @@ impl BTree {
     }
 
     #[allow(unused_variables)]
-    unsafe fn validate(&self, node: *mut BTreeNode, lower_fence: &[u8], upper_fence: &[u8]) {
-        return;
+    unsafe fn validate(&self) {
+        // this is very slow fo large trees
+        const DO_TREE_VALIDATION: bool = false;
+        if DO_TREE_VALIDATION {
+            (*self.root).validate_tree(&[], &[]);
+        }
     }
 }
 
@@ -145,8 +151,10 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
     loop {
         let (node, parent, index) = (&mut *b_tree.root).descend(key, |n| n == merge_target);
         if merge_target.is_null() {
-            if (*node).remove(key).is_none() {
-                return false;
+            let not_found = (*node).remove(key).is_none();
+            b_tree.validate();
+            if not_found {
+                return false;// todo validate
             }
             if (*node).is_underfull() {
                 merge_target = node;
@@ -159,9 +167,11 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
             break;
         }
         if (*parent).try_merge_child(index).is_ok() && (*parent).is_underfull() {
+            b_tree.validate();
             merge_target = parent;
             continue;
         } else {
+            b_tree.validate();
             break;
         }
     }
