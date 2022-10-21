@@ -78,6 +78,7 @@ impl BTreeNode {
         unsafe {
             let leaf = Self::alloc();
             (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
+            //(*leaf).basic = BasicNode::new_leaf();
             leaf
         }
     }

@@ -4,7 +4,8 @@ use crate::{BTreeNode, BTreeNodeTag, PrefixTruncatedKey, PAGE_SIZE, FatTruncated
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 use std::io::Write;
-use std::mem::{size_of, transmute, ManuallyDrop};
+use std::mem::{size_of, transmute, ManuallyDrop, align_of};
+use std::simd::{Simd, SimdPartialEq};
 
 #[derive(Clone, Copy)]
 struct HashSlot {
@@ -43,6 +44,7 @@ struct HashLeafHead {
 
 #[derive(Clone)]
 #[repr(C)]
+#[repr(align(16))]
 pub struct HashLeaf {
     head: HashLeafHead,
     data: [u8; PAGE_SIZE - size_of::<HashLeafHead>()],
@@ -55,16 +57,21 @@ struct LayoutInfo {
 }
 
 const SLOTS_FIRST: bool = true;
+const USE_SIMD: bool = true;
+const SIMD_WIDTH: usize = 16;
+const SIMD_ALIGN: usize = align_of::<Simd<u8, SIMD_WIDTH>>();
 
 impl HashLeaf {
     pub fn space_needed(&self, key_length: usize, payload_length: usize) -> usize {
-        key_length - self.head.prefix_len as usize + payload_length + size_of::<HashSlot>() + 1
+        assert!(SLOTS_FIRST);
+        let head_growth = if USE_SIMD { SIMD_ALIGN.max(size_of::<HashSlot>()) + 1 } else { size_of::<HashSlot>() + 1 };
+        key_length - self.head.prefix_len as usize + payload_length + head_growth
     }
 
     fn layout(count: usize) -> LayoutInfo {
         debug_assert!(SLOTS_FIRST);
         let slots_start = size_of::<HashLeafHead>();
-        let hash_start = slots_start + size_of::<HashSlot>() * count;
+        let hash_start = (slots_start + size_of::<HashSlot>() * count).next_multiple_of(SIMD_ALIGN);
         let data_start = hash_start + count;
         LayoutInfo {
             slots_start,
@@ -345,6 +352,7 @@ impl HashLeaf {
     }
 
     pub fn new() -> Self {
+        assert_eq!(align_of::<Self>(), SIMD_ALIGN);
         HashLeaf {
             head: HashLeafHead {
                 tag: BTreeNodeTag::HashLeaf,
@@ -366,9 +374,53 @@ impl HashLeaf {
     fn find_index(&self, key: PrefixTruncatedKey) -> Option<usize> {
         let needle_hash = Self::compute_hash(key);
         //eprintln!("find {:?} -> {}",key,needle_hash);
+        if USE_SIMD {
+            debug_assert_eq!(self.find_simd(key, needle_hash), self.find_no_simd(key, needle_hash));
+            self.find_simd(key, needle_hash)
+        } else {
+            self.find_no_simd(key, needle_hash)
+        }
+    }
+
+    fn find_no_simd(&self, key: PrefixTruncatedKey, needle_hash: u8) -> Option<usize> {
         for (i, hash) in self.hashes().iter().enumerate() {
             if *hash == needle_hash && self.slots()[i].key(self.as_bytes()) == key {
                 return Some(i);
+            }
+        }
+        None
+    }
+
+    fn find_simd(&self, key: PrefixTruncatedKey, needle_hash: u8) -> Option<usize> {
+        unsafe {
+            use std::simd::ToBitMask;
+            type SimdDtype = std::simd::Simd<u8, SIMD_WIDTH>;
+            let count = self.head.count as usize;
+            let mut hash_ptr = (self as *const Self as *const u8).offset(Self::layout(count).hash_start as isize) as *const SimdDtype;
+            let needle = SimdDtype::splat(needle_hash);
+            debug_assert!(hash_ptr.is_aligned());
+            let mut shift = 0;
+            while shift < count {
+                let candidates = *(hash_ptr);
+                let mut matches = candidates.simd_eq(needle).to_bitmask();
+                loop {
+                    let trailing_zeros = matches.trailing_zeros();
+                    if trailing_zeros == SIMD_WIDTH as u32 {
+                        shift = shift - shift % SIMD_WIDTH + SIMD_WIDTH;
+                        hash_ptr = hash_ptr.offset(1);
+                        break;
+                    } else {
+                        shift += trailing_zeros as usize;
+                        matches >>= trailing_zeros;
+                        matches = matches & !1;
+                        if shift >= count {
+                            return None;
+                        }
+                        if self.slots()[shift].key(self.as_bytes()) == key {
+                            return Some(shift);
+                        }
+                    }
+                }
             }
         }
         None

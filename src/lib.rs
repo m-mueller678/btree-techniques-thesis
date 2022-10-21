@@ -1,3 +1,6 @@
+#![feature(portable_simd)]
+#![feature(pointer_is_aligned)]
+#![feature(int_roundings)]
 extern crate core;
 
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
