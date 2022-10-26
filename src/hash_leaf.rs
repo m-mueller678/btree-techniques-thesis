@@ -44,7 +44,7 @@ struct HashLeafHead {
 
 #[derive(Clone)]
 #[repr(C)]
-#[repr(align(16))]
+#[repr(align(64))]
 pub struct HashLeaf {
     head: HashLeafHead,
     data: [u8; PAGE_SIZE - size_of::<HashLeafHead>()],
@@ -58,7 +58,7 @@ struct LayoutInfo {
 
 const SLOTS_FIRST: bool = true;
 const USE_SIMD: bool = true;
-const SIMD_WIDTH: usize = 16;
+const SIMD_WIDTH: usize = 64;
 const SIMD_ALIGN: usize = align_of::<Simd<u8, SIMD_WIDTH>>();
 
 impl HashLeaf {
