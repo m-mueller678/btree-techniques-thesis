@@ -171,7 +171,7 @@ impl HashLeaf {
     fn compute_hash(key: PrefixTruncatedKey) -> u8 {
         let mut hasher = FxHasher::default();
         hasher.write(key.0);
-        hasher.finish() as u8
+        (hasher.finish() >> 56) as u8
     }
 
     fn store_key_value(
@@ -428,6 +428,19 @@ impl HashLeaf {
     }
 
     pub fn validate(&self) {
+        const VALIDATE_HASH_QUALITY: bool = false;
+        if cfg!(debug_assertions) && VALIDATE_HASH_QUALITY {
+            let mut counts = [0; 256];
+            let average = (self.head.count as f32 / 256.0);
+            let mut acc = 0.0;
+            for h in self.hashes() {
+                counts[*h as usize] += 1;
+            }
+            for c in counts {
+                acc += (c as f32 - average).powi(2);
+            }
+            assert!(acc < 750.0);
+        }
         self.assert_no_collide();
         debug_assert!(self.fence(false) < self.fence(true) || self.fence(true).0.is_empty() && self.head.prefix_len == 0);
         for s in self.slots() {
