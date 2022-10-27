@@ -15,14 +15,14 @@ add_compile_options(-fsanitize=address)
 add_link_options(-fsanitize=address)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-    set(CARGO_FLAGS "--release")
+    set(CARGO_FLAGS --release -- -C target-cpu=cascadelake)
     set(RUST_PATH "${CMAKE_SOURCE_DIR}/target/release/libbtree.a")
 else ()
     set(RUST_PATH "${CMAKE_SOURCE_DIR}/target/debug/libbtree.a")
 endif ()
 
 add_custom_target(btree_rust_debug ALL
-        COMMAND cargo build "${CARGO_FLAGS}"
+        COMMAND cargo rustc --lib ${CARGO_FLAGS}
         BYPRODUCTS ${RUST_PATH}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
