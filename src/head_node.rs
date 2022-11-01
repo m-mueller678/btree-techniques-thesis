@@ -12,6 +12,8 @@ pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
 
 pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
+    const HINT_COUNT: usize;
+
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self>;
     fn make_needle_head(key: PrefixTruncatedKey) -> Self;
     //TODO if last character is ascii, store in last byte, left shift by one
@@ -28,6 +30,8 @@ pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
 }
 
 impl FullKeyHead for u64 {
+    const HINT_COUNT: usize = 16;
+
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
         if key.0.len() < 8 {
             let mut bytes = [0; 8];
@@ -77,6 +81,8 @@ impl KeyRef<'static> for u64 {
 }
 
 impl FullKeyHead for u32 {
+    const HINT_COUNT: usize = 16;
+
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
         if key.0.len() < 4 {
             let mut bytes = [0; 4];
@@ -171,6 +177,49 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         this
     }
 
+    fn update_hint(&mut self, slot_id: usize) {
+        let count = self.head.key_count as usize;
+        let dist = count / (Head::HINT_COUNT + 1);
+        let begin = if (count > Head::HINT_COUNT * 2 + 1)
+            && (((count - 1) / (Head::HINT_COUNT + 1)) == dist)
+            && ((slot_id / dist) > 1)
+        {
+            (slot_id / dist) - 1
+        } else {
+            0
+        };
+        let (_, keys, _, hint) = self.as_parts_mut();
+        for i in begin..Head::HINT_COUNT {
+            hint[i] = keys[dist * (i + 1)];
+            debug_assert!(i == 0 || hint[i - 1] <= hint[i]);
+        }
+    }
+
+    /// returns half open range
+    fn search_hint(&self, head_needle: Head) -> (usize, usize) {
+        debug_assert!(self.head.key_count > 0);
+        let (head, _, _, hint) = self.as_parts();
+        if head.key_count as usize > Head::HINT_COUNT * 2 {
+            let dist = head.key_count as usize / (Head::HINT_COUNT + 1);
+            let pos = (0..Head::HINT_COUNT)
+                .find(|&hi| hint[hi] >= head_needle)
+                .unwrap_or(Head::HINT_COUNT);
+            let pos2 = (pos..Head::HINT_COUNT)
+                .find(|&hi| hint[hi] != head_needle)
+                .unwrap_or(Head::HINT_COUNT);
+            (
+                pos * dist,
+                if pos2 < Head::HINT_COUNT {
+                    (pos2 + 1) * dist
+                } else {
+                    head.key_count as usize
+                },
+            )
+        } else {
+            (0, head.key_count as usize)
+        }
+    }
+
     fn set_fences(
         &mut self,
         mut lower: PrefixTruncatedKey,
@@ -212,15 +261,19 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     }
 
     const KEY_OFFSET: usize = {
+        Self::HINT_OFFSET + Head::HINT_COUNT * size_of::<Head>()
+    };
+
+    const HINT_OFFSET: usize = {
         let key_align = align_of::<Head>();
         size_of::<HeadNodeHead>().next_multiple_of(key_align)
     };
 
     pub fn find_child_for_key(&self, key: &[u8]) -> usize {
-        match self.as_parts().1[..self.head.key_count as usize].binary_search(
-            &Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..])),
-        ) {
-            Ok(i) | Err(i) => i,
+        let needle_head = Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
+        let (lower, upper) = self.search_hint(needle_head);
+        match self.as_parts().1[lower..upper].binary_search(&needle_head) {
+            Ok(i) | Err(i) => lower + i,
         }
     }
 
@@ -237,9 +290,11 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    fn as_parts_mut(&mut self) -> (&mut HeadNodeHead, &mut [Head], &mut [*mut BTreeNode]) {
+    fn as_parts_mut(&mut self) -> (&mut HeadNodeHead, &mut [Head], &mut [*mut BTreeNode], &mut [Head]) {
         unsafe {
             let head = &mut self.head as *mut HeadNodeHead;
+            let hints =
+                (self as *mut Self as *mut u8).offset(Self::HINT_OFFSET as isize) as *mut Head;
             let keys =
                 (self as *mut Self as *mut u8).offset(Self::KEY_OFFSET as isize) as *mut Head;
             let children = (self as *mut Self as *mut u8).offset(self.head.child_offset as isize)
@@ -249,13 +304,16 @@ impl<Head: FullKeyHead> HeadNode<Head> {
                 &mut *head,
                 std::slice::from_raw_parts_mut(keys, capacity),
                 std::slice::from_raw_parts_mut(children, capacity + 1),
+                std::slice::from_raw_parts_mut(hints, Head::HINT_COUNT),
             )
         }
     }
 
-    fn as_parts(&self) -> (&HeadNodeHead, &[Head], &[*mut BTreeNode]) {
+    fn as_parts(&self) -> (&HeadNodeHead, &[Head], &[*mut BTreeNode], &[Head]) {
         unsafe {
             let head = &self.head as *const HeadNodeHead;
+            let hints =
+                (self as *const Self as *const u8).offset(Self::HINT_OFFSET as isize) as *const Head;
             let keys =
                 (self as *const Self as *const u8).offset(Self::KEY_OFFSET as isize) as *mut Head;
             let children = (self as *const Self as *const u8)
@@ -266,6 +324,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
                 &*head,
                 std::slice::from_raw_parts(keys, capacity),
                 std::slice::from_raw_parts(children, capacity + 1),
+                std::slice::from_raw_parts(hints, Head::HINT_COUNT),
             )
         }
     }
@@ -280,7 +339,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     ) -> Result<(), ()> {
         debug_assert!(self.head.key_count < self.head.key_capacity);
         if let Some(key) = Head::make_fence_head(key) {
-            let (head, keys, children) = self.as_parts_mut();
+            let (head, keys, children, _) = self.as_parts_mut();
             keys[..head.key_count as usize + 1]
                 .copy_within(index..head.key_count as usize, index + 1);
             children[..head.key_count as usize + 2]
@@ -288,9 +347,10 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             keys[index] = key;
             children[index] = child;
             head.key_count += 1;
+            self.update_hint(index);
             Ok(())
         } else {
-            let (head, keys, children) = self.as_parts();
+            let (head, keys, children, _) = self.as_parts();
             let mut tmp = BasicNode::new_inner(children[head.key_count as usize]);
             tmp.set_fences(self.fence(false), self.fence(true), head.prefix_len);
             let prefix_len = head.prefix_len as usize;
@@ -389,6 +449,8 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             &mut node_right,
             FatTruncatedKey::full(key_in_node),
         );
+        node_left.update_hint(0);
+        node_right.update_hint(0);
         *self = node_right;
         Ok(())
     }
@@ -401,8 +463,8 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     ) {
         // TODO handle reduced prefix
         assert!(dst.head.prefix_len >= self.head.prefix_len);
-        let (src_head, src_keys, src_children) = self.as_parts();
-        let (dst_head, dst_keys, dst_children) = dst.as_parts_mut();
+        let (src_head, src_keys, src_children, _) = self.as_parts();
+        let (dst_head, dst_keys, dst_children, _) = dst.as_parts_mut();
         let dst_upper = dst_children[dst_head.key_count as usize];
         let prefix_growth = (dst_head.prefix_len - src_head.prefix_len) as usize;
         for i in src_range.clone() {
@@ -423,7 +485,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     fn print(&self) {
         eprintln!("{:?}", self.head);
-        let (head, keys, children) = self.as_parts();
+        let (head, keys, children, _) = self.as_parts();
         for i in 0..head.key_count as usize {
             unsafe {
                 eprintln!(
@@ -447,7 +509,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         debug_assert_eq!(self.fence(false).0, &lower[self.head.prefix_len as usize..]);
         debug_assert_eq!(self.fence(true).0, &upper[self.head.prefix_len as usize..]);
         let mut current_lower: SmallBuff = lower.into();
-        let (head, keys, children) = self.as_parts();
+        let (head, keys, children, _) = self.as_parts();
         for i in 0..head.key_count as usize {
             let current_upper = partial_restore(0, &[self.prefix(lower), &keys[i].restore()], 0);
             unsafe { &mut *children[i] }.validate_tree(&current_lower, &current_upper);
@@ -481,7 +543,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
                 src.prefix_len() as u16,
                 ptr::null_mut(),
             );
-            let (head, keys, children) = tmp.as_parts_mut();
+            let (head, keys, children, _) = tmp.as_parts_mut();
             let src_slots = src.slots();
             for (i, s) in src_slots.iter().enumerate() {
                 keys[i] = Head::make_fence_head(s.key(src.as_bytes())).ok_or(())?;
@@ -491,6 +553,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             }
             children[src_slots.len()] = src.upper();
             head.key_count = src_slots.len() as u16;
+            tmp.update_hint(0);
             ptr::write(this as *mut BTreeNode as *mut Self, tmp);
             Ok(())
         }
