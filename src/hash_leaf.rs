@@ -306,8 +306,6 @@ impl HashLeaf {
         key_in_self: &[u8],
     ) -> Result<(), ()> {
         {
-            //eprintln!("### split");
-            // self.print();
             //sort
             let this = self as *mut Self as *mut u8;
             let count = self.head.count as usize;

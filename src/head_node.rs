@@ -1,5 +1,5 @@
 use crate::find_separator::{find_separator, KeyRef};
-use crate::util::{common_prefix_len, partial_restore};
+use crate::util::{common_prefix_len, partial_restore, SmallBuff};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
 use std::marker::PhantomData;
@@ -10,16 +10,9 @@ use std::{mem, ptr};
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u64>; //TODO change
 
-#[repr(C, align(8))]
-pub struct HeadNode<Head> {
-    head: HeadNodeHead,
-    _p: PhantomData<Head>,
-    data: [u8; PAGE_SIZE - size_of::<HeadNodeHead>()],
-}
-
 pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
-    fn make_fence_head(key: &[u8]) -> Option<Self>;
-    fn make_needle_head(key: &[u8]) -> Self;
+    fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self>;
+    fn make_needle_head(key: PrefixTruncatedKey) -> Self;
     //TODO if last character is ascii, store in last byte, left shift by one
     // try various key extracion schemes
     // generate sample set of fence keys by inserting random subsets of datasets
@@ -29,29 +22,29 @@ pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
     fn strip_prefix(self, prefix_len: usize) -> Self {
         let mut v = self.restore();
         v.drain(..prefix_len);
-        Self::make_fence_head(&v).unwrap()
+        Self::make_fence_head(PrefixTruncatedKey(&v)).unwrap()
     }
 }
 
 impl FullKeyHead for u64 {
-    fn make_fence_head(key: &[u8]) -> Option<Self> {
-        if key.len() < 8 {
+    fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
+        if key.0.len() < 8 {
             let mut bytes = [0; 8];
-            bytes[..key.len()].copy_from_slice(key);
-            bytes[7] = key.len() as u8;
+            bytes[..key.0.len()].copy_from_slice(key.0);
+            bytes[7] = key.0.len() as u8;
             Some(u64::from_be_bytes(bytes))
         } else {
             None
         }
     }
 
-    fn make_needle_head(key: &[u8]) -> Self {
+    fn make_needle_head(key: PrefixTruncatedKey) -> Self {
         let mut bytes = [0; 8];
-        if key.len() < 8 {
-            bytes[..key.len()].copy_from_slice(key);
-            bytes[7] = key.len() as u8;
+        if key.0.len() < 8 {
+            bytes[..key.0.len()].copy_from_slice(key.0);
+            bytes[7] = key.0.len() as u8;
         } else {
-            bytes[..7].copy_from_slice(&key[..7]);
+            bytes[..7].copy_from_slice(&key.0[..7]);
             bytes[7] = 8;
         }
         u64::from_be_bytes(bytes)
@@ -78,11 +71,19 @@ impl KeyRef<'static> for u64 {
     fn truncate(self, new_len: usize) -> Self {
         let mut v = self.restore();
         v.truncate(new_len);
-        Self::make_fence_head(&v).unwrap()
+        Self::make_fence_head(PrefixTruncatedKey(&v)).unwrap()
     }
 }
 
+#[repr(C, align(8))]
+pub struct HeadNode<Head> {
+    head: HeadNodeHead,
+    _p: PhantomData<Head>,
+    data: [u8; PAGE_SIZE - size_of::<HeadNodeHead>()],
+}
+
 #[repr(C)]
+#[derive(Debug)]
 pub struct HeadNodeHead {
     tag: BTreeNodeTag,
     key_count: u16,
@@ -166,7 +167,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     pub fn find_child_for_key(&self, key: &[u8]) -> usize {
         match self.as_parts().1[..self.head.key_count as usize]
-            .binary_search(&Head::make_needle_head(key))
+            .binary_search(&Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..])))
         {
             Ok(i) | Err(i) => i,
         }
@@ -225,7 +226,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         children[..head.key_count as usize + 2]
             .copy_within(index..head.key_count as usize + 1, index + 1);
         //TODO handle this
-        keys[index] = Head::make_fence_head(key.0).unwrap();
+        keys[index] = Head::make_fence_head(key).unwrap();
         children[index] = child;
         head.key_count += 1;
     }
@@ -331,5 +332,40 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     pub fn prefix<'a>(&self, src: &'a [u8]) -> &'a [u8] {
         &src[..self.head.prefix_len as usize]
+    }
+
+    fn print(&self) {
+        eprintln!("{:?}", self.head);
+        let (head, keys, children) = self.as_parts();
+        for i in 0..head.key_count as usize {
+            unsafe {
+                eprintln!("{:3}|{:3?}|{:3?} -> {:?}", i, transmute::<&Head, &[u8; 8]>(&keys[i]), keys[i].restore(), children[i])
+            }
+        }
+        eprintln!("upper: {:?}", children[head.key_count as usize]);
+        eprintln!("fences: {:?}{:?}", self.fence(false), self.fence(true));
+    }
+
+    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(
+            self.fence(false).0,
+            &lower[self.head.prefix_len as usize..]
+        );
+        debug_assert_eq!(
+            self.fence(true).0,
+            &upper[self.head.prefix_len as usize..]
+        );
+        let mut current_lower: SmallBuff = lower.into();
+        let (head, keys, children) = self.as_parts();
+        for i in 0..head.key_count as usize {
+            let current_upper = partial_restore(0, &[self.prefix(lower), &keys[i].restore()], 0);
+            unsafe { &mut *children[i] }.validate_tree(&current_lower, &current_upper);
+            current_lower = current_upper;
+        }
+        unsafe { &mut *children[head.key_count as usize] }.validate_tree(&current_lower, upper);
     }
 }

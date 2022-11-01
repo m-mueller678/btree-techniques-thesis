@@ -17,8 +17,25 @@ pub struct BTree {
     root: *mut BTreeNode,
 }
 
+#[cfg(debug_assertions)]
+static OP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn count_op() {
+    #[cfg(debug_assertions)]{
+        OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(debug_assertions)]
+#[allow(dead_code)]
+extern "C" fn op_count() -> usize {
+    OP_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
+    count_op();
     Box::leak(Box::new(BTree {
         root: BTreeNode::new_leaf(),
     }))
@@ -36,7 +53,7 @@ impl BTree {
                 BTreeNodeTag::U32HeadNode => unreachable!(),
                 BTreeNodeTag::BasicLeaf => {
                     if node.basic.insert(key, payload).is_ok() {
-                        self.validate();
+                        //self.validate();
                         return;
                     }
                     // node is full: split and restart
@@ -45,7 +62,7 @@ impl BTree {
                 }
                 BTreeNodeTag::HashLeaf => {
                     if node.hash_leaf.insert(key, payload).is_ok() {
-                        self.validate();
+                        //self.validate();
                         return;
                     }
                     // node is full: split and restart
@@ -101,7 +118,7 @@ impl BTree {
 
     #[allow(unused_variables)]
     unsafe fn validate(&self) {
-        // this is very slow fo large trees
+        // this is very slow for large trees
         const DO_TREE_VALIDATION: bool = false;
         if DO_TREE_VALIDATION {
             (*self.root).validate_tree(&[], &[]);
@@ -117,6 +134,7 @@ pub unsafe extern "C" fn btree_insert(
     payload: *const u8,
     payload_len: u64,
 ) {
+    count_op();
     BTree::insert(
         &mut *b_tree,
         slice::from_raw_parts(key, key_len as usize),
@@ -131,6 +149,7 @@ pub unsafe extern "C" fn btree_lookup(
     key_len: u64,
     payload_len_out: *mut u64,
 ) -> *const u8 {
+    count_op();
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
     let (node, _, _) = (*b_tree.root).descend(key, |_| false);
@@ -163,6 +182,7 @@ pub unsafe extern "C" fn btree_lookup(
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_len: u64) -> bool {
+    count_op();
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
     let mut merge_target: *mut BTreeNode = ptr::null_mut();
@@ -198,6 +218,7 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
+    count_op();
     drop(Box::<BTree>::from_raw(b_tree));
 }
 

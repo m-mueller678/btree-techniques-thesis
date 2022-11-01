@@ -208,8 +208,8 @@ impl BTreeNode {
                 self.basic.validate_tree(lower, upper)
             },
             BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.validate_tree(lower, upper) },
-            BTreeNodeTag::U64HeadNode => todo!(),
-            BTreeNodeTag::U32HeadNode => todo!(),
+            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.validate_tree(lower, upper) },
+            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.validate_tree(lower, upper) },
         }
     }
 
