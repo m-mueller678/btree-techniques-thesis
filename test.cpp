@@ -49,9 +49,13 @@ void runTest(BenchmarkParameters parameters, vector<string> &data) {
         t.lookup((uint8_t *) data[i].data(), data[i].size() - (data[i].size() / 4));
 
     {
-        for (uint64_t i = 0; i < count; i += 4) // remove some
-            if (!t.remove((uint8_t *) data[i].data(), data[i].size()))
-                throw;
+        {
+            parameters.setParam("op", "remove");
+            PerfEventBlock b(count / 4, parameters);
+            for (uint64_t i = 0; i < count; i += 4) // remove some
+                if (!t.remove((uint8_t *) data[i].data(), data[i].size()))
+                    throw;
+        }
         for (uint64_t i = 0; i < count; i++) // lookup all, causes some misses
             if ((i % 4 == 0) == t.lookup((uint8_t *) data[i].data(), data[i].size()))
                 throw;
@@ -78,6 +82,8 @@ int main() {
     srand(0x1a2b3c4d);
     vector<string> data;
     BenchmarkParameters parameters;
+
+    parameters.setParam("name", getenv("NAME") ? getenv("NAME") : "unnamed");
 
     if (getenv("INT")) {
         vector<uint64_t> v;

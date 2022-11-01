@@ -158,9 +158,8 @@ struct PerfEvent {
 
     static void printCounter(std::ostream &headerOut, std::ostream &dataOut, std::string name, std::string counterValue,
                              bool addComma = true) {
-        auto width = std::max(name.length(), counterValue.length());
-        headerOut << std::setw(static_cast<int>(width)) << name << (addComma ? "," : "") << " ";
-        dataOut << std::setw(static_cast<int>(width)) << counterValue << (addComma ? "," : "") << " ";
+        headerOut << name << (addComma ? "," : "");
+        dataOut << counterValue << (addComma ? "," : "");
     }
 
     template<typename T>
@@ -232,24 +231,26 @@ struct PerfEventBlock {
     PerfEvent e;
     uint64_t scale;
     BenchmarkParameters parameters;
-    bool printHeader;
 
-    PerfEventBlock(uint64_t scale = 1, BenchmarkParameters params = {}, bool printHeader = true)
+    PerfEventBlock(uint64_t scale = 1, BenchmarkParameters params = {})
             : scale(scale),
-              parameters(params),
-              printHeader(printHeader) {
+              parameters(params){
         e.startCounters();
     }
 
     ~PerfEventBlock() {
+        static bool printHeader=true;
+
         e.stopCounters();
         std::stringstream header;
         std::stringstream data;
         parameters.printParams(header, data);
         PerfEvent::printCounter(header, data, "time sec", e.getDuration());
         e.printReport(header, data, scale);
-        if (printHeader)
+        if (printHeader){
+            printHeader=false;
             std::cout << header.str() << std::endl;
+        }
         std::cout << data.str() << std::endl;
     }
 };
