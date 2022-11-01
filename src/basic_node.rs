@@ -350,7 +350,7 @@ impl BasicNode {
         });
     }
 
-    fn set_fences(
+    pub fn set_fences(
         &mut self,
         lower: PrefixTruncatedKey,
         upper: PrefixTruncatedKey,
@@ -470,7 +470,12 @@ impl BasicNode {
             node_right.set_fences(PrefixTruncatedKey(&sep_buffer), self.fence(true), 0);
             PrefixTruncatedKey(&sep_buffer[parent_prefix_len..])
         };
-        parent.insert_child(index_in_parent, parent_sep, node_left_raw);
+        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+            unsafe {
+                BTreeNode::dealloc(node_left_raw);
+                return Err(())
+            }
+        }
         if self.head.tag.is_leaf() {
             self.copy_key_value_range(
                 &self.slots()[..=sep_slot],

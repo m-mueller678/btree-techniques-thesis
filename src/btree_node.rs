@@ -136,17 +136,17 @@ impl BTreeNode {
     }
 
     /// key must be truncated to length returned from request_space
-    pub fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) {
+    pub fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
         match self.tag() {
             BTreeNodeTag::BasicInner => unsafe {
-                self.basic
-                    .raw_insert(index, key, &(child as usize).to_ne_bytes())
+                self.basic.raw_insert(index, key, &(child as usize).to_ne_bytes());
+                Ok(())
             },
             BTreeNodeTag::U64HeadNode => unsafe {
-                self.u64_head_node.insert_child(index, key, child)
+                U64HeadNode::insert_child(&mut self.u64_head_node, index, key, child)
             },
             BTreeNodeTag::U32HeadNode => unsafe {
-                self.u32_head_node.insert_child(index, key, child)
+                U32HeadNode::insert_child(&mut self.u32_head_node, index, key, child)
             },
             BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => {
                 unreachable!()

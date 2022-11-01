@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::ops::Range;
 use std::{mem, ptr};
+use crate::basic_node::BasicNode;
 
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
@@ -154,6 +155,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         extra_prefix: u16,
         upper: *mut BTreeNode,
     ) -> Self {
+        debug_assert_eq!(size_of::<Self>(), PAGE_SIZE);
         let mut this = HeadNode {
             head: HeadNodeHead {
                 tag,
@@ -271,16 +273,38 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    pub fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) {
+    /// may change node type
+    /// if Err is returned, node must be split
+    pub unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
         debug_assert!(self.head.key_count < self.head.key_capacity);
-        let (head, keys, children) = self.as_parts_mut();
-        keys[..head.key_count as usize + 1].copy_within(index..head.key_count as usize, index + 1);
-        children[..head.key_count as usize + 2]
-            .copy_within(index..head.key_count as usize + 1, index + 1);
-        //TODO handle this
-        keys[index] = Head::make_fence_head(key).unwrap();
-        children[index] = child;
-        head.key_count += 1;
+        if let Some(key) = Head::make_fence_head(key) {
+            let (head, keys, children) = self.as_parts_mut();
+            keys[..head.key_count as usize + 1].copy_within(index..head.key_count as usize, index + 1);
+            children[..head.key_count as usize + 2]
+                .copy_within(index..head.key_count as usize + 1, index + 1);
+            keys[index] = key;
+            children[index] = child;
+            head.key_count += 1;
+            Ok(())
+        } else {
+            dbg!(key);
+            let (head, keys, children) = self.as_parts();
+            let mut tmp = BasicNode::new_inner(children[head.key_count as usize]);
+            tmp.set_fences(self.fence(false), self.fence(true), head.prefix_len);
+            let prefix_len = head.prefix_len as usize;
+            for i in 0..head.key_count as usize {
+                Self::try_insert_to_basic(prefix_len, &mut tmp, i, PrefixTruncatedKey(&keys[i].restore()), children[i]).map_err(|x| {
+                    eprintln!("convert overflow");
+                    x
+                })?;
+            }
+            let self_ptr = self as *mut Self as *mut BasicNode;
+            eprintln!("convert success");
+            unsafe {
+                ptr::write(self_ptr, tmp);
+                Self::try_insert_to_basic(prefix_len, &mut *self_ptr, index, key, child)
+            }
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8; PAGE_SIZE] {
@@ -347,7 +371,12 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         );
 
         let parent_sep = PrefixTruncatedKey(&sep_buffer);
-        parent.insert_child(index_in_parent, parent_sep, node_left_raw as *mut BTreeNode);
+        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw as *mut BTreeNode) {
+            unsafe {
+                BTreeNode::dealloc(node_left_raw as *mut BTreeNode);
+                return Err(());
+            }
+        }
         self.copy_key_value_range(0..sep_slot, node_left, FatTruncatedKey::full(key_in_node));
         self.copy_key_value_range(
             sep_slot + 1..self.head.key_count as usize,
@@ -419,5 +448,12 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             current_lower = current_upper;
         }
         unsafe { &mut *children[head.key_count as usize] }.validate_tree(&current_lower, upper);
+    }
+
+    unsafe fn try_insert_to_basic(prefix_len: usize, dst: &mut BasicNode, slot: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
+        let tmp_prefix_len = dst.request_space(dst.space_needed(key.len() + prefix_len, size_of::<*mut BTreeNode>()))?;
+        debug_assert_eq!(tmp_prefix_len, prefix_len);
+        dst.raw_insert(slot, key, &(child as usize).to_ne_bytes());
+        Ok(())
     }
 }

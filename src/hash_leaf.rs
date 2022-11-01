@@ -341,7 +341,12 @@ impl HashLeaf {
             parent_prefix_len,
         );
         let parent_sep = PrefixTruncatedKey(&parent_sep);
-        parent.insert_child(index_in_parent, parent_sep, node_left_raw);
+        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+            unsafe {
+                BTreeNode::dealloc(node_left_raw);
+                return Err(())
+            }
+        }
         if self.head.tag.is_leaf() {
             self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
             self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);

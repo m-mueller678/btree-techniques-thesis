@@ -15,5 +15,6 @@ rustc-hash = "1.1.0"
 crate-type = ["staticlib","lib"]
 
 [profile.dev]
+opt-level = 3
 [profile.release]
 lto = true
