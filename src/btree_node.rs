@@ -103,8 +103,8 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let node = Self::alloc();
-            (*node).u64_head_node = ManuallyDrop::new(U64HeadNode::new(
-                BTreeNodeTag::U64HeadNode,
+            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
+                BTreeNodeTag::U32HeadNode,
                 PrefixTruncatedKey(&[]),
                 PrefixTruncatedKey(&[]),
                 0,

@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::{mem, ptr};
 
 pub type U64HeadNode = HeadNode<u64>;
-pub type U32HeadNode = HeadNode<u64>; //TODO change
+pub type U32HeadNode = HeadNode<u32>;
 
 pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self>;
@@ -59,7 +59,59 @@ impl FullKeyHead for u64 {
     }
 }
 
+
 impl KeyRef<'static> for u64 {
+    fn common_prefix_len(self, b: Self) -> usize {
+        common_prefix_len(&self.restore(), &b.restore())
+    }
+
+    fn len(self) -> usize {
+        self.restore().len()
+    }
+
+    fn truncate(self, new_len: usize) -> Self {
+        let mut v = self.restore();
+        v.truncate(new_len);
+        Self::make_fence_head(PrefixTruncatedKey(&v)).unwrap()
+    }
+}
+
+
+impl FullKeyHead for u32 {
+    fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
+        if key.0.len() < 4 {
+            let mut bytes = [0; 4];
+            bytes[..key.0.len()].copy_from_slice(key.0);
+            bytes[3] = key.0.len() as u8;
+            Some(u32::from_be_bytes(bytes))
+        } else {
+            None
+        }
+    }
+
+    fn make_needle_head(key: PrefixTruncatedKey) -> Self {
+        let mut bytes = [0; 4];
+        if key.0.len() < 4 {
+            bytes[..key.0.len()].copy_from_slice(key.0);
+            bytes[3] = key.0.len() as u8;
+        } else {
+            bytes[..3].copy_from_slice(&key.0[..3]);
+            bytes[3] = 4;
+        }
+        u32::from_be_bytes(bytes)
+    }
+
+    fn restore(self) -> SmallVec<[u8; 16]> {
+        let mut v = self.to_be_bytes().to_smallvec();
+        let len = v[3] as usize;
+        debug_assert!(len < 4, "this was created from a needle key");
+        v.truncate(len);
+        v
+    }
+}
+
+
+impl KeyRef<'static> for u32 {
     fn common_prefix_len(self, b: Self) -> usize {
         common_prefix_len(&self.restore(), &b.restore())
     }
