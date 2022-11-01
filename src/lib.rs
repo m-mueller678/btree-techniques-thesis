@@ -10,6 +10,7 @@ pub mod basic_node;
 pub mod btree_node;
 mod find_separator;
 pub mod hash_leaf;
+pub mod head_node;
 pub mod util;
 
 pub struct BTree {
@@ -31,6 +32,8 @@ impl BTree {
             let node = &mut *node;
             match node.tag() {
                 BTreeNodeTag::BasicInner => unreachable!(),
+                BTreeNodeTag::U64HeadNode => unreachable!(),
+                BTreeNodeTag::U32HeadNode => unreachable!(),
                 BTreeNodeTag::BasicLeaf => {
                     if node.basic.insert(key, payload).is_ok() {
                         self.validate();
@@ -71,6 +74,16 @@ impl BTree {
             BTreeNodeTag::HashLeaf => {
                 (&mut *node)
                     .hash_leaf
+                    .split_node(&mut *parent, index_in_parent, key)
+            }
+            BTreeNodeTag::U64HeadNode => {
+                (&mut *node)
+                    .u64_head_node
+                    .split_node(&mut *parent, index_in_parent, key)
+            }
+            BTreeNodeTag::U32HeadNode => {
+                (&mut *node)
+                    .u32_head_node
                     .split_node(&mut *parent, index_in_parent, key)
             }
         };
@@ -124,6 +137,8 @@ pub unsafe extern "C" fn btree_lookup(
     let node = &*node;
     match node.tag() {
         BTreeNodeTag::BasicInner => unreachable!(),
+        BTreeNodeTag::U64HeadNode => todo!(),
+        BTreeNodeTag::U32HeadNode => todo!(),
         BTreeNodeTag::BasicLeaf => {
             let node = &node.basic;
             let (index, found) = node.lower_bound(node.truncate(key));
@@ -157,7 +172,7 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
             let not_found = (*node).remove(key).is_none();
             b_tree.validate();
             if not_found {
-                return false;// todo validate
+                return false; // todo validate
             }
             if (*node).is_underfull() {
                 merge_target = node;

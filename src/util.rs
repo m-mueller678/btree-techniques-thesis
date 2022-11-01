@@ -44,24 +44,47 @@ pub fn partial_restore(
 
 pub type SmallBuff = SmallVec<[u8; 32]>;
 
-pub fn merge_fences(left: FatTruncatedKey, separator: FatTruncatedKey, right: FatTruncatedKey, set_fences: impl FnOnce(PrefixTruncatedKey, PrefixTruncatedKey, usize)) {
+pub fn merge_fences(
+    left: FatTruncatedKey,
+    separator: FatTruncatedKey,
+    right: FatTruncatedKey,
+    set_fences: impl FnOnce(PrefixTruncatedKey, PrefixTruncatedKey, usize),
+) {
     debug_assert!(left.prefix_len >= separator.prefix_len);
     debug_assert!(right.prefix_len >= separator.prefix_len);
     if left.prefix_len == right.prefix_len {
-        set_fences(PrefixTruncatedKey(left.remainder), PrefixTruncatedKey(right.remainder), left.prefix_len);
+        set_fences(
+            PrefixTruncatedKey(left.remainder),
+            PrefixTruncatedKey(right.remainder),
+            left.prefix_len,
+        );
     } else if left.prefix_len > right.prefix_len {
         let lower = partial_restore(
             separator.prefix_len,
-            &[&separator.remainder[..left.prefix_len - separator.prefix_len], left.remainder, ],
+            &[
+                &separator.remainder[..left.prefix_len - separator.prefix_len],
+                left.remainder,
+            ],
             right.prefix_len,
         );
-        set_fences(PrefixTruncatedKey(&lower), PrefixTruncatedKey(right.remainder), right.prefix_len);
+        set_fences(
+            PrefixTruncatedKey(&lower),
+            PrefixTruncatedKey(right.remainder),
+            right.prefix_len,
+        );
     } else {
         let upper = partial_restore(
             separator.prefix_len,
-            &[&separator.remainder[..right.prefix_len - separator.prefix_len], right.remainder, ],
+            &[
+                &separator.remainder[..right.prefix_len - separator.prefix_len],
+                right.remainder,
+            ],
             left.prefix_len,
         );
-        set_fences(PrefixTruncatedKey(left.remainder), PrefixTruncatedKey(&upper), left.prefix_len);
+        set_fences(
+            PrefixTruncatedKey(left.remainder),
+            PrefixTruncatedKey(&upper),
+            left.prefix_len,
+        );
     }
 }

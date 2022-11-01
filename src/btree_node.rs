@@ -1,5 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
+use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::mem::{size_of, ManuallyDrop};
@@ -13,6 +14,8 @@ pub enum BTreeNodeTag {
     BasicLeaf,
     BasicInner,
     HashLeaf,
+    U64HeadNode,
+    U32HeadNode,
 }
 
 impl BTreeNodeTag {
@@ -21,6 +24,8 @@ impl BTreeNodeTag {
             BTreeNodeTag::BasicLeaf => true,
             BTreeNodeTag::BasicInner => false,
             BTreeNodeTag::HashLeaf => true,
+            BTreeNodeTag::U64HeadNode => false,
+            BTreeNodeTag::U32HeadNode => false,
         }
     }
 
@@ -34,6 +39,8 @@ pub union BTreeNode {
     pub raw_bytes: [u8; PAGE_SIZE],
     pub basic: BasicNode,
     pub hash_leaf: ManuallyDrop<HashLeaf>,
+    pub u64_head_node: ManuallyDrop<U64HeadNode>,
+    pub u32_head_node: ManuallyDrop<U32HeadNode>,
 }
 
 impl BTreeNode {
@@ -59,7 +66,17 @@ impl BTreeNode {
                     self = &mut *self.basic.get_child(index);
                 },
                 BTreeNodeTag::HashLeaf => break,
-            }
+                BTreeNodeTag::U64HeadNode => unsafe {
+                    index = self.u64_head_node.find_child_for_key(key);
+                    parent = self;
+                    self = &mut *self.u64_head_node.get_child(index);
+                },
+                BTreeNodeTag::U32HeadNode => unsafe {
+                    index = self.u32_head_node.find_child_for_key(key);
+                    parent = self;
+                    self = &mut *self.u32_head_node.get_child(index);
+                },
+            };
         }
         (self, parent, index)
     }
@@ -85,9 +102,16 @@ impl BTreeNode {
 
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
-            let leaf = Self::alloc();
-            (*leaf).basic = BasicNode::new_inner(child);
-            leaf
+            let node = Self::alloc();
+            (*node).u64_head_node = ManuallyDrop::new(U64HeadNode::new(
+                BTreeNodeTag::U64HeadNode,
+                PrefixTruncatedKey(&[]),
+                PrefixTruncatedKey(&[]),
+                0,
+                child,
+            ));
+            //(*node).basic = BasicNode::new_inner(child);
+            node
         }
     }
 
@@ -102,6 +126,12 @@ impl BTreeNode {
                         .space_needed(key_length, size_of::<*mut BTreeNode>()),
                 )
             },
+            BTreeNodeTag::U64HeadNode => unsafe {
+                self.u64_head_node.request_space_for_child(key_length)
+            },
+            BTreeNodeTag::U32HeadNode => unsafe {
+                self.u32_head_node.request_space_for_child(key_length)
+            },
         }
     }
 
@@ -111,6 +141,12 @@ impl BTreeNode {
             BTreeNodeTag::BasicInner => unsafe {
                 self.basic
                     .raw_insert(index, key, &(child as usize).to_ne_bytes())
+            },
+            BTreeNodeTag::U64HeadNode => unsafe {
+                self.u64_head_node.insert_child(index, key, child)
+            },
+            BTreeNodeTag::U32HeadNode => unsafe {
+                self.u32_head_node.insert_child(index, key, child)
             },
             BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => {
                 unreachable!()
@@ -126,6 +162,8 @@ impl BTreeNode {
             BTreeNodeTag::HashLeaf => unsafe {
                 self.hash_leaf.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
             },
+            BTreeNodeTag::U64HeadNode => todo!(),
+            BTreeNodeTag::U32HeadNode => todo!(),
         }
     }
 
@@ -134,6 +172,8 @@ impl BTreeNode {
             BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
             BTreeNodeTag::BasicLeaf => panic!(),
             BTreeNodeTag::HashLeaf => unreachable!(),
+            BTreeNodeTag::U64HeadNode => todo!(),
+            BTreeNodeTag::U32HeadNode => todo!(),
         }
     }
 
@@ -154,21 +194,31 @@ impl BTreeNode {
                 self.basic
                     .merge_right(false, &mut (*right).basic, separator)
             }
-            BTreeNodeTag::HashLeaf => self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator),
+            BTreeNodeTag::HashLeaf => self
+                .hash_leaf
+                .try_merge_right(&mut (*right).hash_leaf, separator),
+            BTreeNodeTag::U64HeadNode => todo!(),
+            BTreeNodeTag::U32HeadNode => todo!(),
         }
     }
 
     pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
         match self.tag() {
-            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.validate_tree(lower, upper) },
-            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.validate_tree(lower, upper) }
+            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
+                self.basic.validate_tree(lower, upper)
+            },
+            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.validate_tree(lower, upper) },
+            BTreeNodeTag::U64HeadNode => todo!(),
+            BTreeNodeTag::U32HeadNode => todo!(),
         }
     }
 
     pub fn remove(&mut self, key: &[u8]) -> Option<()> {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.remove(key) },
-            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.remove(key) }
+            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.remove(key) },
+            BTreeNodeTag::U64HeadNode => todo!(),
+            BTreeNodeTag::U32HeadNode => todo!(),
         }
     }
 }

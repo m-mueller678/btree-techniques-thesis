@@ -1,6 +1,8 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::util::{common_prefix_len, head, merge_fences, partial_restore, short_slice, SmallBuff, trailing_bytes};
+use crate::util::{
+    common_prefix_len, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff,
+};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 use std::{mem, ptr};
@@ -93,7 +95,10 @@ impl BasicNode {
     }
 
     pub fn validate(&self) {
-        debug_assert!(self.fence(false) < self.fence(true) || self.fence(true).0.is_empty() && self.head.prefix_len == 0);
+        debug_assert!(
+            self.fence(false) < self.fence(true)
+                || self.fence(true).0.is_empty() && self.head.prefix_len == 0
+        );
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
                 assert!(w[0].key(self.as_bytes()).0 <= w[1].key(self.as_bytes()).0);
@@ -570,10 +575,20 @@ impl BasicNode {
         let mut tmp = BasicNode::new(self.head.tag.is_leaf());
         tmp.head.upper = right.head.upper;
         if STRIP_PREFIX {
-            merge_fences(FatTruncatedKey { remainder: self.fence(false).0, prefix_len: self.head.prefix_len as usize },
-                         separator, FatTruncatedKey { remainder: right.fence(true).0, prefix_len: right.head.prefix_len as usize }, |lo, hi, p| {
+            merge_fences(
+                FatTruncatedKey {
+                    remainder: self.fence(false).0,
+                    prefix_len: self.head.prefix_len as usize,
+                },
+                separator,
+                FatTruncatedKey {
+                    remainder: right.fence(true).0,
+                    prefix_len: right.head.prefix_len as usize,
+                },
+                |lo, hi, p| {
                     tmp.set_fences(lo, hi, p as u16);
-                });
+                },
+            );
         } else {
             tmp.set_fences(self.fence(false), right.fence(true), 0);
         }
@@ -595,8 +610,7 @@ impl BasicNode {
     }
 
     pub fn remove_slot(&mut self, index: usize) {
-        self.head.space_used -=
-            self.slots()[index].key_len + self.slots()[index].val_len;
+        self.head.space_used -= self.slots()[index].key_len + self.slots()[index].val_len;
         let back_slots = &mut self.slots_mut()[index..];
         back_slots.copy_within(1.., 0);
         self.head.count -= 1;
@@ -618,17 +632,36 @@ impl BasicNode {
     }
 
     pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(self.head.prefix_len as usize, common_prefix_len(lower, upper));
-        debug_assert_eq!(self.fence(false), if STRIP_PREFIX { self.truncate(&lower) } else { PrefixTruncatedKey(lower) });
-        debug_assert_eq!(self.fence(true), if STRIP_PREFIX { self.truncate(&upper) } else { PrefixTruncatedKey(upper) });
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(
+            self.fence(false),
+            if STRIP_PREFIX {
+                self.truncate(&lower)
+            } else {
+                PrefixTruncatedKey(lower)
+            }
+        );
+        debug_assert_eq!(
+            self.fence(true),
+            if STRIP_PREFIX {
+                self.truncate(&upper)
+            } else {
+                PrefixTruncatedKey(upper)
+            }
+        );
         if self.head.tag.is_inner() {
             let mut current_lower: SmallBuff = lower.into();
             for (i, s) in self.slots().iter().enumerate() {
-                let current_upper = partial_restore(0, &[self.prefix(lower), s.key(self.as_bytes()).0], 0);
+                let current_upper =
+                    partial_restore(0, &[self.prefix(lower), s.key(self.as_bytes()).0], 0);
                 unsafe { &mut *self.get_child(i) }.validate_tree(&current_lower, &current_upper);
                 current_lower = current_upper;
             }
-            unsafe { &mut *self.get_child(self.head.count as usize) }.validate_tree(&current_lower, upper);
+            unsafe { &mut *self.get_child(self.head.count as usize) }
+                .validate_tree(&current_lower, upper);
         }
     }
 }
