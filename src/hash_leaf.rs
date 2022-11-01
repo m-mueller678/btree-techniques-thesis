@@ -5,7 +5,7 @@ use rustc_hash::FxHasher;
 use std::hash::Hasher;
 use std::io::Write;
 use std::mem::{size_of, transmute, ManuallyDrop, align_of};
-use std::simd::{Simd, SimdPartialEq};
+use std::simd::SimdPartialEq;
 
 #[derive(Clone, Copy)]
 struct HashSlot {
@@ -58,8 +58,8 @@ struct LayoutInfo {
 
 const SLOTS_FIRST: bool = true;
 const USE_SIMD: bool = true;
-const SIMD_WIDTH: usize = 64;
-const SIMD_ALIGN: usize = align_of::<Simd<u8, SIMD_WIDTH>>();
+const SIMD_WIDTH: usize = 32;
+const SIMD_ALIGN: usize = 64;
 
 impl HashLeaf {
     pub fn space_needed(&self, key_length: usize, payload_length: usize) -> usize {
@@ -71,7 +71,7 @@ impl HashLeaf {
     fn layout(count: usize) -> LayoutInfo {
         debug_assert!(SLOTS_FIRST);
         let slots_start = size_of::<HashLeafHead>();
-        let hash_start = (slots_start + size_of::<HashSlot>() * count);
+        let hash_start = slots_start + size_of::<HashSlot>() * count;
         let hash_start = if USE_SIMD { hash_start.next_multiple_of(SIMD_ALIGN) } else { hash_start };
         let data_start = hash_start + count;
         LayoutInfo {
@@ -431,7 +431,7 @@ impl HashLeaf {
         const VALIDATE_HASH_QUALITY: bool = false;
         if cfg!(debug_assertions) && VALIDATE_HASH_QUALITY {
             let mut counts = [0; 256];
-            let average = (self.head.count as f32 / 256.0);
+            let average = self.head.count as f32 / 256.0;
             let mut acc = 0.0;
             for h in self.hashes() {
                 counts[*h as usize] += 1;
@@ -517,6 +517,7 @@ impl HashLeaf {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
     }
 
+    #[allow(dead_code)]
     fn print(&self) {
         eprintln!("HashLeaf {:?} [{:?}..], {:?} - {:?}", self as *const Self, self.head.prefix_len, self.fence(false).0, self.fence(true).0);
         for (i, s) in self.slots().iter().enumerate() {
