@@ -1,5 +1,6 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
+use crate::head_node::U32HeadNode;
 use crate::util::{
     common_prefix_len, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff,
 };
@@ -133,6 +134,10 @@ impl BasicNode {
     pub fn as_bytes(&self) -> &[u8; PAGE_SIZE] {
         assert_eq!(PAGE_SIZE, size_of::<Self>());
         unsafe { transmute(self as *const Self) }
+    }
+
+    pub fn prefix_len(&self) -> usize {
+        self.head.prefix_len as usize
     }
 
     unsafe fn as_bytes_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
@@ -473,7 +478,7 @@ impl BasicNode {
         if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
             unsafe {
                 BTreeNode::dealloc(node_left_raw);
-                return Err(())
+                return Err(());
             }
         }
         if self.head.tag.is_leaf() {
@@ -505,6 +510,17 @@ impl BasicNode {
         node_left.make_hint();
         node_right.make_hint();
         *self = node_right;
+        if self.head.tag.is_inner() {
+            unsafe {
+                U32HeadNode::try_from_basic_node(&mut *node_left_raw, BTreeNodeTag::U32HeadNode)
+                    .ok();
+                U32HeadNode::try_from_basic_node(
+                    &mut *(self as *mut Self as *mut BTreeNode),
+                    BTreeNodeTag::U32HeadNode,
+                )
+                    .ok();
+            }
+        }
         Ok(())
     }
 

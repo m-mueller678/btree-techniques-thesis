@@ -344,7 +344,7 @@ impl HashLeaf {
         if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
             unsafe {
                 BTreeNode::dealloc(node_left_raw);
-                return Err(())
+                return Err(());
             }
         }
         if self.head.tag.is_leaf() {

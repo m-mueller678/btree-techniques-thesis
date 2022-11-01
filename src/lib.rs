@@ -21,7 +21,8 @@ pub struct BTree {
 static OP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn count_op() {
-    #[cfg(debug_assertions)]{
+    #[cfg(debug_assertions)]
+    {
         OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -31,7 +32,6 @@ fn count_op() {
 extern "C" fn op_count() -> usize {
     OP_COUNT.load(std::sync::atomic::Ordering::Relaxed)
 }
-
 
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {

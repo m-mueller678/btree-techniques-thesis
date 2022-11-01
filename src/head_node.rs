@@ -1,3 +1,4 @@
+use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
 use crate::util::{common_prefix_len, partial_restore, SmallBuff};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
@@ -6,7 +7,6 @@ use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::ops::Range;
 use std::{mem, ptr};
-use crate::basic_node::BasicNode;
 
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
@@ -60,7 +60,6 @@ impl FullKeyHead for u64 {
     }
 }
 
-
 impl KeyRef<'static> for u64 {
     fn common_prefix_len(self, b: Self) -> usize {
         common_prefix_len(&self.restore(), &b.restore())
@@ -76,7 +75,6 @@ impl KeyRef<'static> for u64 {
         Self::make_fence_head(PrefixTruncatedKey(&v)).unwrap()
     }
 }
-
 
 impl FullKeyHead for u32 {
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
@@ -110,7 +108,6 @@ impl FullKeyHead for u32 {
         v
     }
 }
-
 
 impl KeyRef<'static> for u32 {
     fn common_prefix_len(self, b: Self) -> usize {
@@ -220,9 +217,9 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     };
 
     pub fn find_child_for_key(&self, key: &[u8]) -> usize {
-        match self.as_parts().1[..self.head.key_count as usize]
-            .binary_search(&Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..])))
-        {
+        match self.as_parts().1[..self.head.key_count as usize].binary_search(
+            &Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..])),
+        ) {
             Ok(i) | Err(i) => i,
         }
     }
@@ -275,11 +272,17 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     /// may change node type
     /// if Err is returned, node must be split
-    pub unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
+    pub unsafe fn insert_child(
+        &mut self,
+        index: usize,
+        key: PrefixTruncatedKey,
+        child: *mut BTreeNode,
+    ) -> Result<(), ()> {
         debug_assert!(self.head.key_count < self.head.key_capacity);
         if let Some(key) = Head::make_fence_head(key) {
             let (head, keys, children) = self.as_parts_mut();
-            keys[..head.key_count as usize + 1].copy_within(index..head.key_count as usize, index + 1);
+            keys[..head.key_count as usize + 1]
+                .copy_within(index..head.key_count as usize, index + 1);
             children[..head.key_count as usize + 2]
                 .copy_within(index..head.key_count as usize + 1, index + 1);
             keys[index] = key;
@@ -287,19 +290,20 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             head.key_count += 1;
             Ok(())
         } else {
-            dbg!(key);
             let (head, keys, children) = self.as_parts();
             let mut tmp = BasicNode::new_inner(children[head.key_count as usize]);
             tmp.set_fences(self.fence(false), self.fence(true), head.prefix_len);
             let prefix_len = head.prefix_len as usize;
             for i in 0..head.key_count as usize {
-                Self::try_insert_to_basic(prefix_len, &mut tmp, i, PrefixTruncatedKey(&keys[i].restore()), children[i]).map_err(|x| {
-                    eprintln!("convert overflow");
-                    x
-                })?;
+                Self::try_insert_to_basic(
+                    prefix_len,
+                    &mut tmp,
+                    i,
+                    PrefixTruncatedKey(&keys[i].restore()),
+                    children[i],
+                )?;
             }
             let self_ptr = self as *mut Self as *mut BasicNode;
-            eprintln!("convert success");
             unsafe {
                 ptr::write(self_ptr, tmp);
                 Self::try_insert_to_basic(prefix_len, &mut *self_ptr, index, key, child)
@@ -371,7 +375,9 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         );
 
         let parent_sep = PrefixTruncatedKey(&sep_buffer);
-        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw as *mut BTreeNode) {
+        if let Err(()) =
+        parent.insert_child(index_in_parent, parent_sep, node_left_raw as *mut BTreeNode)
+        {
             unsafe {
                 BTreeNode::dealloc(node_left_raw as *mut BTreeNode);
                 return Err(());
@@ -420,7 +426,13 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         let (head, keys, children) = self.as_parts();
         for i in 0..head.key_count as usize {
             unsafe {
-                eprintln!("{:3}|{:3?}|{:3?} -> {:?}", i, transmute::<&Head, &[u8; 8]>(&keys[i]), keys[i].restore(), children[i])
+                eprintln!(
+                    "{:3}|{:3?}|{:3?} -> {:?}",
+                    i,
+                    transmute::<&Head, &[u8; 8]>(&keys[i]),
+                    keys[i].restore(),
+                    children[i]
+                )
             }
         }
         eprintln!("upper: {:?}", children[head.key_count as usize]);
@@ -432,14 +444,8 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             self.head.prefix_len as usize,
             common_prefix_len(lower, upper)
         );
-        debug_assert_eq!(
-            self.fence(false).0,
-            &lower[self.head.prefix_len as usize..]
-        );
-        debug_assert_eq!(
-            self.fence(true).0,
-            &upper[self.head.prefix_len as usize..]
-        );
+        debug_assert_eq!(self.fence(false).0, &lower[self.head.prefix_len as usize..]);
+        debug_assert_eq!(self.fence(true).0, &upper[self.head.prefix_len as usize..]);
         let mut current_lower: SmallBuff = lower.into();
         let (head, keys, children) = self.as_parts();
         for i in 0..head.key_count as usize {
@@ -450,10 +456,43 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         unsafe { &mut *children[head.key_count as usize] }.validate_tree(&current_lower, upper);
     }
 
-    unsafe fn try_insert_to_basic(prefix_len: usize, dst: &mut BasicNode, slot: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
-        let tmp_prefix_len = dst.request_space(dst.space_needed(key.len() + prefix_len, size_of::<*mut BTreeNode>()))?;
+    unsafe fn try_insert_to_basic(
+        prefix_len: usize,
+        dst: &mut BasicNode,
+        slot: usize,
+        key: PrefixTruncatedKey,
+        child: *mut BTreeNode,
+    ) -> Result<(), ()> {
+        let tmp_prefix_len = dst
+            .request_space(dst.space_needed(key.len() + prefix_len, size_of::<*mut BTreeNode>()))?;
         debug_assert_eq!(tmp_prefix_len, prefix_len);
         dst.raw_insert(slot, key, &(child as usize).to_ne_bytes());
         Ok(())
+    }
+
+    pub fn try_from_basic_node(this: &mut BTreeNode, new_tag: BTreeNodeTag) -> Result<(), ()> {
+        debug_assert!(this.tag() == BTreeNodeTag::BasicInner);
+        unsafe {
+            let src = &this.basic;
+            let mut tmp = Self::new(
+                new_tag,
+                src.fence(false),
+                src.fence(true),
+                src.prefix_len() as u16,
+                ptr::null_mut(),
+            );
+            let (head, keys, children) = tmp.as_parts_mut();
+            let src_slots = src.slots();
+            for (i, s) in src_slots.iter().enumerate() {
+                keys[i] = Head::make_fence_head(s.key(src.as_bytes())).ok_or(())?;
+            }
+            for i in 0..src_slots.len() {
+                children[i] = src.get_child(i);
+            }
+            children[src_slots.len()] = src.upper();
+            head.key_count = src_slots.len() as u16;
+            ptr::write(this as *mut BTreeNode as *mut Self, tmp);
+            Ok(())
+        }
     }
 }
