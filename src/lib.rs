@@ -12,6 +12,7 @@ mod find_separator;
 pub mod hash_leaf;
 pub mod head_node;
 pub mod util;
+pub mod inner_node;
 
 pub struct BTree {
     root: *mut BTreeNode,

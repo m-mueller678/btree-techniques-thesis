@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::ops::Range;
 use std::{mem, ptr};
+use crate::inner_node::InnerNode;
 
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;

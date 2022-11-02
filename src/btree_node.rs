@@ -5,17 +5,19 @@ use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::mem::{size_of, ManuallyDrop};
 use std::{mem, ptr};
+use std::intrinsics::transmute;
+use crate::inner_node::InnerNode;
 
 pub const PAGE_SIZE: usize = 4096;
 
 #[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
 pub enum BTreeNodeTag {
-    BasicLeaf,
-    BasicInner,
-    HashLeaf,
-    U64HeadNode,
-    U32HeadNode,
+    BasicLeaf = 0,
+    HashLeaf = 1,
+    BasicInner = 128,
+    U64HeadNode = 129,
+    U32HeadNode = 130,
 }
 
 impl BTreeNodeTag {
@@ -44,6 +46,14 @@ pub union BTreeNode {
 }
 
 impl BTreeNode {
+    pub fn write_inner<N: InnerNode>(&mut self, src: N) -> &mut N {
+        unsafe {
+            ptr::copy_nonoverlapping((&src) as *const _ as *const Self, self);
+            mem::forget(src);
+            transmute::<&mut Self,_>(self)
+        }
+    }
+
     pub fn tag(&self) -> BTreeNodeTag {
         BTreeNodeTag::try_from_primitive(unsafe { self.raw_bytes[0] }).unwrap()
     }

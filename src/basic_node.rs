@@ -1,12 +1,12 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::head_node::U32HeadNode;
-use crate::util::{
-    common_prefix_len, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff,
-};
+use crate::head_node::{HeadNodeHead, U32HeadNode};
+use crate::util::{common_prefix_len, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff, get_key_from_slice};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 use std::{mem, ptr};
+use std::ops::Range;
+use crate::inner_node::InnerNode;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -136,22 +136,9 @@ impl BasicNode {
         unsafe { transmute(self as *const Self) }
     }
 
-    pub fn prefix_len(&self) -> usize {
-        self.head.prefix_len as usize
-    }
-
     unsafe fn as_bytes_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
         assert_eq!(PAGE_SIZE, size_of::<Self>());
         transmute(self as *mut Self)
-    }
-
-    pub fn fence(&self, upper: bool) -> PrefixTruncatedKey {
-        let f = if upper {
-            self.head.upper_fence
-        } else {
-            self.head.lower_fence
-        };
-        PrefixTruncatedKey(&self.as_bytes()[f.offset as usize..][..f.len as usize])
     }
 
     pub fn prefix<'a>(&self, src: &'a [u8]) -> &'a [u8] {
@@ -211,19 +198,6 @@ impl BasicNode {
             )
         } else {
             (0, self.head.count as usize)
-        }
-    }
-
-    pub fn get_child(&self, index: usize) -> *mut BTreeNode {
-        debug_assert!(index <= self.head.count as usize);
-        if index == self.head.count as usize {
-            self.head.upper
-        } else {
-            unsafe {
-                ptr::read_unaligned(
-                    self.slots()[index].value(self.as_bytes()).as_ptr() as *const *mut BTreeNode
-                )
-            }
         }
     }
 
@@ -684,5 +658,70 @@ impl BasicNode {
             unsafe { &mut *self.get_child(self.head.count as usize) }
                 .validate_tree(&current_lower, upper);
         }
+    }
+}
+
+impl InnerNode for BasicNode {
+    fn fence(&self, upper: bool) -> PrefixTruncatedKey {
+        let f = if upper {
+            self.head.upper_fence
+        } else {
+            self.head.lower_fence
+        };
+        PrefixTruncatedKey(&self.as_bytes()[f.offset as usize..][..f.len as usize])
+    }
+
+    fn prefix_len(&self) -> usize {
+        self.head.prefix_len as usize
+    }
+
+    fn key_count(&self) -> usize {
+        self.head.count as usize
+    }
+
+    fn get_child(&self, index: usize) -> *mut BTreeNode {
+        debug_assert!(index <= self.head.count as usize);
+        if index == self.head.count as usize {
+            self.head.upper
+        } else {
+            unsafe {
+                ptr::read_unaligned(
+                    self.slots()[index].value(self.as_bytes()).as_ptr() as *const *mut BTreeNode
+                )
+            }
+        }
+    }
+
+    fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+        get_key_from_slice(self.slots()[index].key(self.as_bytes()), dst, strip_prefix)
+    }
+
+    fn batch_insert(&mut self, range: Range<usize>, source: &BTreeNode) -> Result<(), ()> {
+        if self.free_space() < size_of::<BasicSlot>() * range.len() { return Err(()); };
+        let old_count = self.head.count as usize + range.len();
+        self.head.count += range.len() as u16;
+        let mut offset = self.head.data_offset as usize;
+        let min_offset = offset - self.free_space();
+        unsafe {
+            for i in range {
+                let bytes = &mut self.as_bytes_mut()[min_offset..offset];
+                let child_bytes = (source.get_child(i) as usize).to_ne_bytes();
+                let val_len = get_key_from_slice(PrefixTruncatedKey(child_bytes.as_slice()), &mut bytes[min_offset..offset], 0)?;
+                offset -= val_len;
+                let key_len = source.get_key(i, &mut bytes[min_offset..offset], 0)?;
+                offset -= key_len;
+                let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
+                self.data.slots[old_count + i] = BasicSlot { offset: offset as u16, key_len: key_len as u16, val_len: val_len as u16, head }
+            }
+        }
+        self.head.space_used += self.head.data_offset - offset as u16;
+        self.head.data_offset = offset as u16;
+        Ok(())
+    }
+
+    fn construct(this: &mut BTreeNode, prefix_len: usize, lower_fence: PrefixTruncatedKey, upper_fence: PrefixTruncatedKey, upper_child: *mut BTreeNode) -> Result<(), ()> {
+        let this = this.write_inner(BasicNode::new_inner(upper_child));
+        this.set_fences(lower_fence, upper_fence, prefix_len as u16);
+        Ok(())
     }
 }

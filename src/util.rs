@@ -88,3 +88,13 @@ pub fn merge_fences(
         );
     }
 }
+
+/// implementation of InnerNode::get_key
+pub fn get_key_from_slice(src: PrefixTruncatedKey, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+    let src = &src.0[strip_prefix..];
+    if dst.len() < src.len() {
+        return Err(());
+    }
+    dst[dst.len() - src.len()..].copy_from_slice(src);
+    Ok(src.len())
+}
