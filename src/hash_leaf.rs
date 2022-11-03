@@ -1,4 +1,5 @@
 use crate::find_separator::find_separator;
+use crate::inner_node::{FenceData, InnerConversionSource};
 use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use rustc_hash::FxHasher;
@@ -6,7 +7,6 @@ use std::hash::Hasher;
 use std::io::Write;
 use std::mem::{align_of, size_of, transmute, ManuallyDrop};
 use std::simd::SimdPartialEq;
-use crate::inner_node::{FenceData, InnerConversionSource};
 
 #[derive(Clone, Copy)]
 struct HashSlot {
@@ -263,7 +263,14 @@ impl HashLeaf {
         );
     }
 
-    fn set_fences(&mut self, FenceData { lower_fence, upper_fence, prefix_len }: FenceData) {
+    fn set_fences(
+        &mut self,
+        FenceData {
+            lower_fence,
+            upper_fence,
+            prefix_len,
+        }: FenceData,
+    ) {
         debug_assert!(lower_fence <= upper_fence || upper_fence.0.is_empty());
         self.head.prefix_len = prefix_len as u16;
         self.head.lower_fence = FenceKeySlot {
@@ -329,9 +336,21 @@ impl HashLeaf {
             (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
             &mut (*node_left_raw).hash_leaf
         };
-        node_left.set_fences(FenceData { upper_fence: truncated_sep_key, ..self.fences() }.restrip());
+        node_left.set_fences(
+            FenceData {
+                upper_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
         let mut node_right = Self::new();
-        node_right.set_fences(FenceData { lower_fence: truncated_sep_key, ..self.fences() }.restrip());
+        node_right.set_fences(
+            FenceData {
+                lower_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
         let parent_sep = partial_restore(
             0,
             &[self.prefix(key_in_self), truncated_sep_key.0],
@@ -362,8 +381,16 @@ impl HashLeaf {
 
     pub fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(short_slice(self.as_bytes(), self.head.lower_fence.offset, self.head.lower_fence.len)),
-            upper_fence: PrefixTruncatedKey(short_slice(self.as_bytes(), self.head.upper_fence.offset, self.head.upper_fence.len)),
+            lower_fence: PrefixTruncatedKey(short_slice(
+                self.as_bytes(),
+                self.head.lower_fence.offset,
+                self.head.lower_fence.len,
+            )),
+            upper_fence: PrefixTruncatedKey(short_slice(
+                self.as_bytes(),
+                self.head.upper_fence.offset,
+                self.head.upper_fence.len,
+            )),
             prefix_len: self.head.prefix_len as usize,
         }
     }

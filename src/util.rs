@@ -1,6 +1,6 @@
+use crate::inner_node::FenceData;
 use crate::{FatTruncatedKey, HeadTruncatedKey, PrefixTruncatedKey};
 use smallvec::SmallVec;
-use crate::inner_node::FenceData;
 
 pub fn head(key: PrefixTruncatedKey) -> (u32, HeadTruncatedKey) {
     let mut k_padded = [0u8; 4];
@@ -45,12 +45,12 @@ pub fn partial_restore(
 
 pub type SmallBuff = SmallVec<[u8; 32]>;
 
-pub fn merge_fences(
+pub fn merge_fences<R>(
     left: FatTruncatedKey,
     separator: FatTruncatedKey,
     right: FatTruncatedKey,
-    set_fences: impl FnOnce(FenceData),
-) {
+    set_fences: impl FnOnce(FenceData) -> R,
+) -> R {
     debug_assert!(left.prefix_len >= separator.prefix_len);
     debug_assert!(right.prefix_len >= separator.prefix_len);
     if left.prefix_len == right.prefix_len {
@@ -58,8 +58,7 @@ pub fn merge_fences(
             lower_fence: PrefixTruncatedKey(left.remainder),
             upper_fence: PrefixTruncatedKey(right.remainder),
             prefix_len: left.prefix_len,
-        }
-        );
+        })
     } else if left.prefix_len > right.prefix_len {
         let lower = partial_restore(
             separator.prefix_len,
@@ -69,13 +68,11 @@ pub fn merge_fences(
             ],
             right.prefix_len,
         );
-        set_fences(
-            FenceData {
-                lower_fence: PrefixTruncatedKey(&lower),
-                upper_fence: PrefixTruncatedKey(right.remainder),
-                prefix_len: right.prefix_len,
-            }
-        );
+        set_fences(FenceData {
+            lower_fence: PrefixTruncatedKey(&lower),
+            upper_fence: PrefixTruncatedKey(right.remainder),
+            prefix_len: right.prefix_len,
+        })
     } else {
         let upper = partial_restore(
             separator.prefix_len,
@@ -85,18 +82,20 @@ pub fn merge_fences(
             ],
             left.prefix_len,
         );
-        set_fences(
-            FenceData {
-                lower_fence: PrefixTruncatedKey(left.remainder),
-                upper_fence: PrefixTruncatedKey(&upper),
-                prefix_len: left.prefix_len,
-            }
-        );
+        set_fences(FenceData {
+            lower_fence: PrefixTruncatedKey(left.remainder),
+            upper_fence: PrefixTruncatedKey(&upper),
+            prefix_len: left.prefix_len,
+        })
     }
 }
 
 /// implementation of InnerNode::get_key
-pub fn get_key_from_slice(src: PrefixTruncatedKey, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+pub fn get_key_from_slice(
+    src: PrefixTruncatedKey,
+    dst: &mut [u8],
+    strip_prefix: usize,
+) -> Result<usize, ()> {
     let src = &src.0[strip_prefix..];
     if dst.len() < src.len() {
         return Err(());

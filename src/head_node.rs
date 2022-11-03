@@ -1,13 +1,14 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallBuff};
-use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
+use crate::{op_late, BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
+use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::ops::Range;
 use std::{mem, ptr};
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
@@ -155,10 +156,7 @@ pub struct HeadNodeHead {
 }
 
 impl<Head: FullKeyHead> HeadNode<Head> {
-    pub fn new(
-        fences: FenceData,
-        upper: *mut BTreeNode,
-    ) -> Self {
+    pub fn new(fences: FenceData, upper: *mut BTreeNode) -> Self {
         debug_assert_eq!(size_of::<Self>(), PAGE_SIZE);
         let mut this = Self::from_fences(fences);
         this.as_parts_mut().2[0] = upper;
@@ -226,11 +224,11 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    fn set_fences(
-        &mut self,
-        fences: FenceData,
-    ) {
-        debug_assert!(fences.lower_fence < fences.upper_fence || fences.upper_fence.0.is_empty() && self.head.prefix_len == 0);
+    fn set_fences(&mut self, fences: FenceData) {
+        debug_assert!(
+            fences.lower_fence < fences.upper_fence
+                || fences.upper_fence.0.is_empty() && self.head.prefix_len == 0
+        );
         self.head.prefix_len = fences.prefix_len as u16;
         let upper_fence_offset = PAGE_SIZE - fences.upper_fence.0.len();
         let lower_fence_offset = upper_fence_offset - fences.lower_fence.0.len();
@@ -261,9 +259,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         self.head.child_offset = child_offset as u16;
     }
 
-    const KEY_OFFSET: usize = {
-        Self::HINT_OFFSET + Head::HINT_COUNT * size_of::<Head>()
-    };
+    const KEY_OFFSET: usize = { Self::HINT_OFFSET + Head::HINT_COUNT * size_of::<Head>() };
 
     const HINT_OFFSET: usize = {
         let key_align = align_of::<Head>();
@@ -271,8 +267,11 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     };
 
     pub fn find_child_for_key(&self, key: &[u8]) -> usize {
-        if self.head.key_count == 0 { return 0; }
-        let needle_head = Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
+        if self.head.key_count == 0 {
+            return 0;
+        }
+        let needle_head =
+            Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
         let (lower, upper) = self.search_hint(needle_head);
         match self.as_parts().1[lower..upper].binary_search(&needle_head) {
             Ok(i) | Err(i) => lower + i,
@@ -287,7 +286,14 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    fn as_parts_mut(&mut self) -> (&mut HeadNodeHead, &mut [Head], &mut [*mut BTreeNode], &mut [Head]) {
+    fn as_parts_mut(
+        &mut self,
+    ) -> (
+        &mut HeadNodeHead,
+        &mut [Head],
+        &mut [*mut BTreeNode],
+        &mut [Head],
+    ) {
         unsafe {
             let head = &mut self.head as *mut HeadNodeHead;
             let hints =
@@ -309,8 +315,8 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     fn as_parts(&self) -> (&HeadNodeHead, &[Head], &[*mut BTreeNode], &[Head]) {
         unsafe {
             let head = &self.head as *const HeadNodeHead;
-            let hints =
-                (self as *const Self as *const u8).offset(Self::HINT_OFFSET as isize) as *const Head;
+            let hints = (self as *const Self as *const u8).offset(Self::HINT_OFFSET as isize)
+                as *const Head;
             let keys =
                 (self as *const Self as *const u8).offset(Self::KEY_OFFSET as isize) as *mut Head;
             let children = (self as *const Self as *const u8)
@@ -334,8 +340,14 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         key: PrefixTruncatedKey,
         child: *mut BTreeNode,
     ) -> Result<(), ()> {
-        debug_assert!(key <= self.fences().upper_fence || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0);
-        debug_assert!(key > self.fences().lower_fence || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0);
+        debug_assert!(
+            key <= self.fences().upper_fence
+                || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0
+        );
+        debug_assert!(
+            key > self.fences().lower_fence
+                || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0
+        );
         debug_assert!(self.head.key_count < self.head.key_capacity);
         if let Some(key) = Head::make_fence_head(key) {
             let (head, keys, children, _) = self.as_parts_mut();
@@ -400,11 +412,17 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         let mut node_right;
         unsafe {
             node_left = (&mut *node_left_raw).write_inner(Self::new(
-                FenceData { upper_fence: truncated_sep_key, ..self.fences() },
+                FenceData {
+                    upper_fence: truncated_sep_key,
+                    ..self.fences()
+                },
                 self.get_child(sep_slot as usize),
             ));
             node_right = Self::new(
-                FenceData { lower_fence: truncated_sep_key, ..self.fences() },
+                FenceData {
+                    lower_fence: truncated_sep_key,
+                    ..self.fences()
+                },
                 self.get_child(self.head.key_count as usize),
             );
         };
@@ -463,31 +481,19 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         &src[..self.head.prefix_len as usize]
     }
 
-    fn print(&self) {
-        eprintln!("{:?}", self.head);
-        let (head, keys, children, _) = self.as_parts();
-        for i in 0..head.key_count as usize {
-            unsafe {
-                eprintln!(
-                    "{:3}|{:3?}|{:3?} -> {:?}",
-                    i,
-                    transmute::<&Head, &[u8; 8]>(&keys[i]),
-                    keys[i].restore(),
-                    children[i]
-                )
-            }
-        }
-        eprintln!("upper: {:?}", children[head.key_count as usize]);
-        eprintln!("fences: {:?}", self.fences());
-    }
-
     pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
         debug_assert_eq!(
             self.head.prefix_len as usize,
             common_prefix_len(lower, upper)
         );
-        debug_assert_eq!(self.fences().lower_fence.0, &lower[self.head.prefix_len as usize..]);
-        debug_assert_eq!(self.fences().upper_fence.0, &upper[self.head.prefix_len as usize..]);
+        debug_assert_eq!(
+            self.fences().lower_fence.0,
+            &lower[self.head.prefix_len as usize..]
+        );
+        debug_assert_eq!(
+            self.fences().upper_fence.0,
+            &upper[self.head.prefix_len as usize..]
+        );
         let mut current_lower: SmallBuff = lower.into();
         let (head, keys, children, _) = self.as_parts();
         for i in 0..head.key_count as usize {
@@ -516,10 +522,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         debug_assert!(this.tag() == BTreeNodeTag::BasicInner);
         unsafe {
             let src = &this.basic;
-            let mut tmp = Self::new(
-                src.fences(),
-                ptr::null_mut(),
-            );
+            let mut tmp = Self::new(src.fences(), ptr::null_mut());
             let (head, keys, children, _) = tmp.as_parts_mut();
             let src_slots = src.slots();
             for (i, s) in src_slots.iter().enumerate() {
@@ -536,21 +539,30 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    pub fn is_underfull(&self) -> bool {
-        self.head.key_count * 4 <= self.head.key_capacity
-    }
-
     pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
-        if child_index == self.key_count() {
-            if child_index == 0 {
-                // only one child
-                return Err(());
-            }
-            child_index -= 1;
-        }
+        debug_assert!(child_index < self.head.key_count as usize + 1);
+        debug_assert!(unsafe { (&*self.get_child(child_index)).is_underfull() });
         unsafe {
-            let left = &mut *self.get_child(child_index);
-            let right = self.get_child(child_index + 1);
+            let left;
+            let right;
+            if child_index == self.key_count() {
+                if child_index == 0 {
+                    // only one child
+                    return Err(());
+                }
+                child_index -= 1;
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !left.is_underfull() {
+                    return Err(());
+                }
+            } else {
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !right.is_underfull() {
+                    return Err(());
+                }
+            }
             let sep_key = self.as_parts().1[child_index].restore();
             left.try_merge_right(
                 right,
@@ -572,22 +584,67 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         head.key_count -= 1;
         self.update_hint(0);
     }
+
+    #[tracing::instrument(skip(self, right_any))]
+    pub fn merge_right(
+        &mut self,
+        right_any: &mut BTreeNode,
+        separator: FatTruncatedKey,
+    ) -> Result<(), ()> {
+        if op_late() {
+            self.print();
+            right_any.to_inner_conversion_source().print();
+        }
+        unsafe {
+            let right_dyn = right_any.to_inner_conversion_source();
+            if !right_dyn.is_underfull() {
+                return Err(());
+            }
+            let mut dst = BTreeNode::new_uninit();
+            merge_right::<Self>(&mut dst, self, right_dyn, separator)?;
+            ptr::write(right_any, dst);
+        }
+        if op_late() {
+            right_any.to_inner_conversion_source().print();
+        }
+        return Ok(());
+    }
 }
 
 impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
     fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()> {
         let fences = src.fences();
-        dst.write_inner(Self::from_fences(fences));
+        let this = dst.write_inner(Self::from_fences(fences));
         let len = src.key_count();
-        todo!()
+        if (this.head.key_capacity as usize) < len {
+            return Err(());
+        }
+        this.head.key_count = len as u16;
+        let (_, keys, children, _) = this.as_parts_mut();
+        debug_assert!(size_of::<Head>() <= 8);
+        for i in 0..len {
+            let mut buff = [0u8; 16];
+            src.get_key(i, buff.as_mut_slice(), 0)?;
+            keys[i] = Head::make_fence_head(PrefixTruncatedKey(buff.as_slice())).ok_or(())?;
+        }
+        for i in 0..len + 1 {
+            children[i] = src.get_child(i);
+        }
+        this.update_hint(0);
+        Ok(())
     }
 }
 
 impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
     fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.lower_fence_offset as usize..self.head.upper_fence_offset as usize]),
-            upper_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.upper_fence_offset as usize..]),
+            lower_fence: PrefixTruncatedKey(
+                &self.as_bytes()
+                    [self.head.lower_fence_offset as usize..self.head.upper_fence_offset as usize],
+            ),
+            upper_fence: PrefixTruncatedKey(
+                &self.as_bytes()[self.head.upper_fence_offset as usize..],
+            ),
             prefix_len: self.head.prefix_len as usize,
         }
     }
@@ -606,5 +663,28 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
         //TODO avoidable copy
         let key = self.as_parts().1[index].restore();
         get_key_from_slice(PrefixTruncatedKey(&key), dst, strip_prefix)
+    }
+
+    fn is_underfull(&self) -> bool {
+        self.head.key_count * 4 <= self.head.key_capacity
+    }
+
+    #[cfg(debug_assertions)]
+    fn print(&self) {
+        eprintln!("{:?}", self.head);
+        let (head, keys, children, _) = self.as_parts();
+        for i in 0..head.key_count as usize {
+            unsafe {
+                eprintln!(
+                    "{:3}|{:3?}|{:3?} -> {:?}",
+                    i,
+                    transmute::<&Head, &[u8; 8]>(&keys[i]),
+                    keys[i].restore(),
+                    children[i]
+                )
+            }
+        }
+        eprintln!("upper: {:?}", children[head.key_count as usize]);
+        eprintln!("fences: {:?}", self.fences());
     }
 }

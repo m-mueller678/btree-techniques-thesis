@@ -1,12 +1,15 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::{HeadNodeHead, U32HeadNode};
-use crate::util::{common_prefix_len, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff, get_key_from_slice};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
+use crate::util::{
+    common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice,
+    trailing_bytes, SmallBuff,
+};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
-use std::{mem, ptr};
 use std::ops::Range;
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
+use std::{mem, ptr};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -32,7 +35,7 @@ impl BasicSlot {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct FenceKeySlot {
     offset: u16,
     len: u16,
@@ -42,7 +45,7 @@ const HINT_COUNT: usize = 16;
 
 const STRIP_PREFIX: bool = true;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct BasicNodeHead {
     tag: BTreeNodeTag,
@@ -323,7 +326,11 @@ impl BasicNode {
 
     pub fn set_fences(
         &mut self,
-        FenceData { lower_fence: lower, upper_fence: upper, prefix_len }: FenceData,
+        FenceData {
+            lower_fence: lower,
+            upper_fence: upper,
+            prefix_len,
+        }: FenceData,
     ) {
         debug_assert!(lower < upper || upper.0.is_empty() && self.head.prefix_len == 0);
         self.head.prefix_len = prefix_len as u16;
@@ -425,8 +432,20 @@ impl BasicNode {
             &[self.prefix(key_in_node), truncated_sep_key.0],
             parent_prefix_len,
         );
-        node_left.set_fences(FenceData { upper_fence: truncated_sep_key, ..self.fences() }.restrip());
-        node_right.set_fences(FenceData { lower_fence: truncated_sep_key, ..self.fences() }.restrip());
+        node_left.set_fences(
+            FenceData {
+                upper_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
+        node_right.set_fences(
+            FenceData {
+                lower_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
         let parent_sep = PrefixTruncatedKey(&sep_buffer);
         if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
             unsafe {
@@ -486,17 +505,6 @@ impl BasicNode {
         )
     }
 
-    pub fn print_slots(&self) {
-        for (i, s) in self.slots().iter().enumerate() {
-            eprintln!(
-                "{:4}|{:3?}|{:3?}",
-                i,
-                s.head.to_be_bytes(),
-                s.key(self.as_bytes())
-            );
-        }
-    }
-
     pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
         if child_index == self.slots().len() {
             if child_index == 0 {
@@ -525,9 +533,26 @@ impl BasicNode {
     pub fn merge_right(
         &mut self,
         is_inner: bool,
-        right: &mut BasicNode,
+        right_any: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
+        if self.head.tag.is_leaf() {
+            debug_assert!(right_any.tag() == self.head.tag);
+        } else {
+            if right_any.tag() != self.head.tag {
+                unsafe {
+                    let mut dst = BTreeNode::new_uninit();
+                    let right = right_any.to_inner_conversion_source();
+                    if !right.is_underfull() {
+                        return Err(());
+                    }
+                    merge_right::<Self>(&mut dst, self, right, separator)?;
+                    ptr::write(right_any, dst);
+                }
+                return Ok(());
+            }
+        }
+        let right = unsafe { &right_any.basic };
         let new_prefix_len = self.head.prefix_len.min(right.head.prefix_len);
         let left_grow_per_key = self.head.prefix_len - new_prefix_len;
         let left_grow = (left_grow_per_key) * self.head.count;
@@ -573,7 +598,7 @@ impl BasicNode {
         }
         right.copy_key_value_range(right.slots(), &mut tmp, separator);
         tmp.make_hint();
-        *right = tmp;
+        right_any.basic = tmp;
         Ok(())
     }
 
@@ -637,8 +662,14 @@ impl BasicNode {
 impl InnerConversionSource for BasicNode {
     fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.lower_fence.offset as usize..][..self.head.lower_fence.len as usize]),
-            upper_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.upper_fence.offset as usize..][..self.head.upper_fence.len as usize]),
+            lower_fence: PrefixTruncatedKey(
+                &self.as_bytes()[self.head.lower_fence.offset as usize..]
+                    [..self.head.lower_fence.len as usize],
+            ),
+            upper_fence: PrefixTruncatedKey(
+                &self.as_bytes()[self.head.upper_fence.offset as usize..]
+                    [..self.head.upper_fence.len as usize],
+            ),
             prefix_len: self.head.prefix_len as usize,
         }
     }
@@ -663,18 +694,34 @@ impl InnerConversionSource for BasicNode {
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
         get_key_from_slice(self.slots()[index].key(self.as_bytes()), dst, strip_prefix)
     }
+
+    fn is_underfull(&self) -> bool {
+        self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
+    }
+
+    #[cfg(debug_assertions)]
+    fn print(&self) {
+        eprintln!("{:?}", self.head);
+        for (i, s) in self.slots().iter().enumerate() {
+            eprintln!(
+                "{:4}|{:3?}|{:3?}",
+                i,
+                s.head.to_be_bytes(),
+                s.key(self.as_bytes())
+            );
+        }
+    }
 }
 
 impl InnerConversionSink for BasicNode {
-    fn create(
-        dst: &mut BTreeNode,
-        src: &impl InnerConversionSource,
-    ) -> Result<(), ()> {
+    fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()> {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
         this.set_fences(src.fences());
 
-        if this.free_space() < size_of::<BasicSlot>() * key_count { return Err(()); };
+        if this.free_space() < size_of::<BasicSlot>() * key_count {
+            return Err(());
+        };
         let old_count = this.head.count as usize + key_count;
         this.head.count += key_count as u16;
         let mut offset = this.head.data_offset as usize;
@@ -683,12 +730,21 @@ impl InnerConversionSink for BasicNode {
             for i in 0..key_count {
                 let bytes = &mut this.as_bytes_mut()[min_offset..offset];
                 let child_bytes = (src.get_child(i) as usize).to_ne_bytes();
-                let val_len = get_key_from_slice(PrefixTruncatedKey(child_bytes.as_slice()), &mut bytes[min_offset..offset], 0)?;
+                let val_len = get_key_from_slice(
+                    PrefixTruncatedKey(child_bytes.as_slice()),
+                    &mut bytes[min_offset..offset],
+                    0,
+                )?;
                 offset -= val_len;
                 let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
                 let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
-                this.data.slots[old_count + i] = BasicSlot { offset: offset as u16, key_len: key_len as u16, val_len: val_len as u16, head }
+                this.data.slots[old_count + i] = BasicSlot {
+                    offset: offset as u16,
+                    key_len: key_len as u16,
+                    val_len: val_len as u16,
+                    head,
+                }
             }
         }
         this.head.space_used += this.head.data_offset - offset as u16;

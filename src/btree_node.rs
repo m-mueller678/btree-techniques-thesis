@@ -1,12 +1,12 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{U32HeadNode, U64HeadNode};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use std::intrinsics::transmute;
 use std::mem::{size_of, ManuallyDrop};
 use std::{mem, ptr};
-use std::intrinsics::transmute;
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -43,6 +43,7 @@ pub union BTreeNode {
     pub hash_leaf: ManuallyDrop<HashLeaf>,
     pub u64_head_node: ManuallyDrop<U64HeadNode>,
     pub u32_head_node: ManuallyDrop<U32HeadNode>,
+    pub uninit: (),
 }
 
 impl BTreeNode {
@@ -52,6 +53,10 @@ impl BTreeNode {
             mem::forget(src);
             transmute::<&mut Self, _>(self)
         }
+    }
+
+    pub unsafe fn new_uninit() -> Self {
+        BTreeNode { uninit: () }
     }
 
     pub fn tag(&self) -> BTreeNodeTag {
@@ -174,7 +179,7 @@ impl BTreeNode {
     pub fn is_underfull(&self) -> bool {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
-                self.basic.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
+                self.basic.is_underfull()
             },
             BTreeNodeTag::HashLeaf => unsafe {
                 self.hash_leaf.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
@@ -189,8 +194,12 @@ impl BTreeNode {
             BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
             BTreeNodeTag::BasicLeaf => panic!(),
             BTreeNodeTag::HashLeaf => unreachable!(),
-            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.merge_children_check(child_index) },
-            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.merge_children_check(child_index) },
+            BTreeNodeTag::U64HeadNode => unsafe {
+                self.u64_head_node.merge_children_check(child_index)
+            },
+            BTreeNodeTag::U32HeadNode => unsafe {
+                self.u32_head_node.merge_children_check(child_index)
+            },
         }
     }
 
@@ -201,22 +210,15 @@ impl BTreeNode {
         right: *mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
-        debug_assert!((*right).tag() == self.tag());
         debug_assert!(right != self);
         match self.tag() {
-            BTreeNodeTag::BasicInner => {
-                self.basic.merge_right(true, &mut (*right).basic, separator)
-            }
-            BTreeNodeTag::BasicLeaf => {
-                self.basic
-                    .merge_right(false, &mut (*right).basic, separator)
-            }
+            BTreeNodeTag::BasicInner => self.basic.merge_right(true, &mut *right, separator),
+            BTreeNodeTag::BasicLeaf => self.basic.merge_right(false, &mut *right, separator),
             BTreeNodeTag::HashLeaf => self
                 .hash_leaf
                 .try_merge_right(&mut (*right).hash_leaf, separator),
-            //TODO implment head node merging
-            BTreeNodeTag::U64HeadNode => Err(()),
-            BTreeNodeTag::U32HeadNode => Err(()),
+            BTreeNodeTag::U64HeadNode => self.u64_head_node.merge_right(&mut *right, separator),
+            BTreeNodeTag::U32HeadNode => self.u32_head_node.merge_right(&mut *right, separator),
         }
     }
 
