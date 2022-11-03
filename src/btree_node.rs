@@ -6,7 +6,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::mem::{size_of, ManuallyDrop};
 use std::{mem, ptr};
 use std::intrinsics::transmute;
-use crate::inner_node::InnerNode;
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -46,11 +46,11 @@ pub union BTreeNode {
 }
 
 impl BTreeNode {
-    pub fn write_inner<N: InnerNode>(&mut self, src: N) -> &mut N {
+    pub fn write_inner<N: InnerConversionSink>(&mut self, src: N) -> &mut N {
         unsafe {
-            ptr::copy_nonoverlapping((&src) as *const _ as *const Self, self);
+            ptr::copy_nonoverlapping((&src) as *const N as *const Self, self, 1);
             mem::forget(src);
-            transmute::<&mut Self,_>(self)
+            transmute::<&mut Self, _>(self)
         }
     }
 
@@ -114,10 +114,11 @@ impl BTreeNode {
         unsafe {
             let node = Self::alloc();
             (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
-                BTreeNodeTag::U32HeadNode,
-                PrefixTruncatedKey(&[]),
-                PrefixTruncatedKey(&[]),
-                0,
+                FenceData {
+                    lower_fence: PrefixTruncatedKey(&[]),
+                    upper_fence: PrefixTruncatedKey(&[]),
+                    prefix_len: 0,
+                },
                 child,
             ));
             //(*node).basic = BasicNode::new_inner(child);

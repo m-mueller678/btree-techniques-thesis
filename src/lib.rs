@@ -1,6 +1,7 @@
 #![feature(portable_simd)]
 #![feature(pointer_is_aligned)]
 #![feature(int_roundings)]
+#![feature(ptr_metadata)]
 extern crate core;
 
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
@@ -24,7 +25,7 @@ static OP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 fn count_op() {
     #[cfg(debug_assertions)]
     {
-        OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _new_count = OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)+1;
     }
 }
 
@@ -120,7 +121,7 @@ impl BTree {
     #[allow(unused_variables)]
     unsafe fn validate(&self) {
         // this is very slow for large trees
-        const DO_TREE_VALIDATION: bool = false;
+        const DO_TREE_VALIDATION: bool = true;
         if DO_TREE_VALIDATION {
             (*self.root).validate_tree(&[], &[]);
         }

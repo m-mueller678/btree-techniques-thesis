@@ -6,7 +6,7 @@ use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 use std::{mem, ptr};
 use std::ops::Range;
-use crate::inner_node::InnerNode;
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -97,8 +97,8 @@ impl BasicNode {
 
     pub fn validate(&self) {
         debug_assert!(
-            self.fence(false) < self.fence(true)
-                || self.fence(true).0.is_empty() && self.head.prefix_len == 0
+            self.fences().lower_fence < self.fences().upper_fence
+                || self.fences().upper_fence.0.is_empty() && self.head.prefix_len == 0
         );
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
@@ -258,15 +258,7 @@ impl BasicNode {
     fn compactify(&mut self) {
         let should = self.free_space_after_compaction();
         let mut tmp = Self::new(self.head.tag.is_leaf());
-        tmp.set_fences(
-            self.fence(false),
-            self.fence(true),
-            if STRIP_PREFIX {
-                self.head.prefix_len
-            } else {
-                0
-            },
-        );
+        tmp.set_fences(self.fences());
         self.copy_key_value_range(self.slots(), &mut tmp, FatTruncatedKey::full(&[]));
         tmp.head.upper = self.head.upper;
         *self = tmp;
@@ -331,22 +323,17 @@ impl BasicNode {
 
     pub fn set_fences(
         &mut self,
-        lower: PrefixTruncatedKey,
-        upper: PrefixTruncatedKey,
-        extra_prefix: u16,
+        FenceData { lower_fence: lower, upper_fence: upper, prefix_len }: FenceData,
     ) {
         debug_assert!(lower < upper || upper.0.is_empty() && self.head.prefix_len == 0);
-        debug_assert!(STRIP_PREFIX || extra_prefix == 0);
-        let new_prefix = common_prefix_len(lower.0, upper.0);
-        self.head.prefix_len = new_prefix as u16 + extra_prefix;
-        let strip_prefix = if STRIP_PREFIX { new_prefix } else { 0 };
+        self.head.prefix_len = prefix_len as u16;
         self.head.lower_fence = FenceKeySlot {
-            offset: self.write_data(&lower.0[strip_prefix..]),
-            len: (lower.0.len() - strip_prefix) as u16,
+            offset: self.write_data(lower.0),
+            len: (lower.0.len()) as u16,
         };
         self.head.upper_fence = FenceKeySlot {
-            offset: self.write_data(&upper.0[strip_prefix..]),
-            len: (upper.0.len() - strip_prefix) as u16,
+            offset: self.write_data(upper.0),
+            len: (upper.0.len()) as u16,
         };
     }
 
@@ -433,22 +420,14 @@ impl BasicNode {
             &mut (*node_left_raw).basic
         };
         let mut node_right = Self::new(self.head.tag.is_leaf());
-        let sep_buffer;
-        let parent_sep = if STRIP_PREFIX {
-            sep_buffer = partial_restore(
-                0,
-                &[self.prefix(key_in_node), truncated_sep_key.0],
-                parent_prefix_len,
-            );
-            node_left.set_fences(self.fence(false), truncated_sep_key, self.head.prefix_len);
-            node_right.set_fences(truncated_sep_key, self.fence(true), self.head.prefix_len);
-            PrefixTruncatedKey(&sep_buffer)
-        } else {
-            sep_buffer = partial_restore(0, &[self.prefix(key_in_node), truncated_sep_key.0], 0);
-            node_left.set_fences(self.fence(false), PrefixTruncatedKey(&sep_buffer), 0);
-            node_right.set_fences(PrefixTruncatedKey(&sep_buffer), self.fence(true), 0);
-            PrefixTruncatedKey(&sep_buffer[parent_prefix_len..])
-        };
+        let sep_buffer = partial_restore(
+            0,
+            &[self.prefix(key_in_node), truncated_sep_key.0],
+            parent_prefix_len,
+        );
+        node_left.set_fences(FenceData { upper_fence: truncated_sep_key, ..self.fences() }.restrip());
+        node_right.set_fences(FenceData { lower_fence: truncated_sep_key, ..self.fences() }.restrip());
+        let parent_sep = PrefixTruncatedKey(&sep_buffer);
         if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
             unsafe {
                 BTreeNode::dealloc(node_left_raw);
@@ -569,24 +548,18 @@ impl BasicNode {
         }
         let mut tmp = BasicNode::new(self.head.tag.is_leaf());
         tmp.head.upper = right.head.upper;
-        if STRIP_PREFIX {
-            merge_fences(
-                FatTruncatedKey {
-                    remainder: self.fence(false).0,
-                    prefix_len: self.head.prefix_len as usize,
-                },
-                separator,
-                FatTruncatedKey {
-                    remainder: right.fence(true).0,
-                    prefix_len: right.head.prefix_len as usize,
-                },
-                |lo, hi, p| {
-                    tmp.set_fences(lo, hi, p as u16);
-                },
-            );
-        } else {
-            tmp.set_fences(self.fence(false), right.fence(true), 0);
-        }
+        merge_fences(
+            FatTruncatedKey {
+                remainder: self.fences().lower_fence.0,
+                prefix_len: self.head.prefix_len as usize,
+            },
+            separator,
+            FatTruncatedKey {
+                remainder: right.fences().upper_fence.0,
+                prefix_len: right.head.prefix_len as usize,
+            },
+            |f| tmp.set_fences(f),
+        );
         debug_assert_eq!(tmp.head.prefix_len, new_prefix_len);
         self.copy_key_value_range(self.slots(), &mut tmp, separator);
         if is_inner {
@@ -632,7 +605,7 @@ impl BasicNode {
             common_prefix_len(lower, upper)
         );
         debug_assert_eq!(
-            self.fence(false),
+            self.fences().lower_fence,
             if STRIP_PREFIX {
                 self.truncate(&lower)
             } else {
@@ -640,7 +613,7 @@ impl BasicNode {
             }
         );
         debug_assert_eq!(
-            self.fence(true),
+            self.fences().upper_fence,
             if STRIP_PREFIX {
                 self.truncate(&upper)
             } else {
@@ -661,18 +634,13 @@ impl BasicNode {
     }
 }
 
-impl InnerNode for BasicNode {
-    fn fence(&self, upper: bool) -> PrefixTruncatedKey {
-        let f = if upper {
-            self.head.upper_fence
-        } else {
-            self.head.lower_fence
-        };
-        PrefixTruncatedKey(&self.as_bytes()[f.offset as usize..][..f.len as usize])
-    }
-
-    fn prefix_len(&self) -> usize {
-        self.head.prefix_len as usize
+impl InnerConversionSource for BasicNode {
+    fn fences(&self) -> FenceData {
+        FenceData {
+            lower_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.lower_fence.offset as usize..][..self.head.lower_fence.len as usize]),
+            upper_fence: PrefixTruncatedKey(&self.as_bytes()[self.head.upper_fence.offset as usize..][..self.head.upper_fence.len as usize]),
+            prefix_len: self.head.prefix_len as usize,
+        }
     }
 
     fn key_count(&self) -> usize {
@@ -695,33 +663,36 @@ impl InnerNode for BasicNode {
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
         get_key_from_slice(self.slots()[index].key(self.as_bytes()), dst, strip_prefix)
     }
+}
 
-    fn batch_insert(&mut self, range: Range<usize>, source: &BTreeNode) -> Result<(), ()> {
-        if self.free_space() < size_of::<BasicSlot>() * range.len() { return Err(()); };
-        let old_count = self.head.count as usize + range.len();
-        self.head.count += range.len() as u16;
-        let mut offset = self.head.data_offset as usize;
-        let min_offset = offset - self.free_space();
+impl InnerConversionSink for BasicNode {
+    fn create(
+        dst: &mut BTreeNode,
+        src: &impl InnerConversionSource,
+    ) -> Result<(), ()> {
+        let key_count = src.key_count();
+        let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
+        this.set_fences(src.fences());
+
+        if this.free_space() < size_of::<BasicSlot>() * key_count { return Err(()); };
+        let old_count = this.head.count as usize + key_count;
+        this.head.count += key_count as u16;
+        let mut offset = this.head.data_offset as usize;
+        let min_offset = offset - this.free_space();
         unsafe {
-            for i in range {
-                let bytes = &mut self.as_bytes_mut()[min_offset..offset];
-                let child_bytes = (source.get_child(i) as usize).to_ne_bytes();
+            for i in 0..key_count {
+                let bytes = &mut this.as_bytes_mut()[min_offset..offset];
+                let child_bytes = (src.get_child(i) as usize).to_ne_bytes();
                 let val_len = get_key_from_slice(PrefixTruncatedKey(child_bytes.as_slice()), &mut bytes[min_offset..offset], 0)?;
                 offset -= val_len;
-                let key_len = source.get_key(i, &mut bytes[min_offset..offset], 0)?;
+                let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
                 let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
-                self.data.slots[old_count + i] = BasicSlot { offset: offset as u16, key_len: key_len as u16, val_len: val_len as u16, head }
+                this.data.slots[old_count + i] = BasicSlot { offset: offset as u16, key_len: key_len as u16, val_len: val_len as u16, head }
             }
         }
-        self.head.space_used += self.head.data_offset - offset as u16;
-        self.head.data_offset = offset as u16;
-        Ok(())
-    }
-
-    fn construct(this: &mut BTreeNode, prefix_len: usize, lower_fence: PrefixTruncatedKey, upper_fence: PrefixTruncatedKey, upper_child: *mut BTreeNode) -> Result<(), ()> {
-        let this = this.write_inner(BasicNode::new_inner(upper_child));
-        this.set_fences(lower_fence, upper_fence, prefix_len as u16);
+        this.head.space_used += this.head.data_offset - offset as u16;
+        this.head.data_offset = offset as u16;
         Ok(())
     }
 }

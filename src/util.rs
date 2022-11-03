@@ -1,5 +1,6 @@
 use crate::{FatTruncatedKey, HeadTruncatedKey, PrefixTruncatedKey};
 use smallvec::SmallVec;
+use crate::inner_node::FenceData;
 
 pub fn head(key: PrefixTruncatedKey) -> (u32, HeadTruncatedKey) {
     let mut k_padded = [0u8; 4];
@@ -48,15 +49,16 @@ pub fn merge_fences(
     left: FatTruncatedKey,
     separator: FatTruncatedKey,
     right: FatTruncatedKey,
-    set_fences: impl FnOnce(PrefixTruncatedKey, PrefixTruncatedKey, usize),
+    set_fences: impl FnOnce(FenceData),
 ) {
     debug_assert!(left.prefix_len >= separator.prefix_len);
     debug_assert!(right.prefix_len >= separator.prefix_len);
     if left.prefix_len == right.prefix_len {
-        set_fences(
-            PrefixTruncatedKey(left.remainder),
-            PrefixTruncatedKey(right.remainder),
-            left.prefix_len,
+        set_fences(FenceData {
+            lower_fence: PrefixTruncatedKey(left.remainder),
+            upper_fence: PrefixTruncatedKey(right.remainder),
+            prefix_len: left.prefix_len,
+        }
         );
     } else if left.prefix_len > right.prefix_len {
         let lower = partial_restore(
@@ -68,9 +70,11 @@ pub fn merge_fences(
             right.prefix_len,
         );
         set_fences(
-            PrefixTruncatedKey(&lower),
-            PrefixTruncatedKey(right.remainder),
-            right.prefix_len,
+            FenceData {
+                lower_fence: PrefixTruncatedKey(&lower),
+                upper_fence: PrefixTruncatedKey(right.remainder),
+                prefix_len: right.prefix_len,
+            }
         );
     } else {
         let upper = partial_restore(
@@ -82,9 +86,11 @@ pub fn merge_fences(
             left.prefix_len,
         );
         set_fences(
-            PrefixTruncatedKey(left.remainder),
-            PrefixTruncatedKey(&upper),
-            left.prefix_len,
+            FenceData {
+                lower_fence: PrefixTruncatedKey(left.remainder),
+                upper_fence: PrefixTruncatedKey(&upper),
+                prefix_len: left.prefix_len,
+            }
         );
     }
 }
@@ -95,6 +101,7 @@ pub fn get_key_from_slice(src: PrefixTruncatedKey, dst: &mut [u8], strip_prefix:
     if dst.len() < src.len() {
         return Err(());
     }
-    dst[dst.len() - src.len()..].copy_from_slice(src);
+    let dst_len = dst.len();
+    dst[dst_len - src.len()..].copy_from_slice(src);
     Ok(src.len())
 }

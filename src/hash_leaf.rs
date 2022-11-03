@@ -6,6 +6,7 @@ use std::hash::Hasher;
 use std::io::Write;
 use std::mem::{align_of, size_of, transmute, ManuallyDrop};
 use std::simd::SimdPartialEq;
+use crate::inner_node::{FenceData, InnerConversionSource};
 
 #[derive(Clone, Copy)]
 struct HashSlot {
@@ -262,22 +263,16 @@ impl HashLeaf {
         );
     }
 
-    fn set_fences(
-        &mut self,
-        lower: PrefixTruncatedKey,
-        upper: PrefixTruncatedKey,
-        additional_prefix: u16,
-    ) {
-        debug_assert!(lower <= upper || upper.0.is_empty());
-        let new_prefix_len = common_prefix_len(lower.0, upper.0);
-        self.head.prefix_len = new_prefix_len as u16 + additional_prefix;
+    fn set_fences(&mut self, FenceData { lower_fence, upper_fence, prefix_len }: FenceData) {
+        debug_assert!(lower_fence <= upper_fence || upper_fence.0.is_empty());
+        self.head.prefix_len = prefix_len as u16;
         self.head.lower_fence = FenceKeySlot {
-            offset: self.write_data(&lower.0[new_prefix_len..]),
-            len: (lower.0.len() - new_prefix_len) as u16,
+            offset: self.write_data(lower_fence.0),
+            len: (lower_fence.0.len()) as u16,
         };
         self.head.upper_fence = FenceKeySlot {
-            offset: self.write_data(&upper.0[new_prefix_len..]),
-            len: (upper.0.len() - new_prefix_len) as u16,
+            offset: self.write_data(upper_fence.0),
+            len: (upper_fence.0.len()) as u16,
         };
     }
 
@@ -332,9 +327,9 @@ impl HashLeaf {
             (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
             &mut (*node_left_raw).hash_leaf
         };
-        node_left.set_fences(self.fence(false), truncated_sep_key, self.head.prefix_len);
+        node_left.set_fences(FenceData { upper_fence: truncated_sep_key, ..self.fences() }.restrip());
         let mut node_right = Self::new();
-        node_right.set_fences(truncated_sep_key, self.fence(true), self.head.prefix_len);
+        node_right.set_fences(FenceData { lower_fence: truncated_sep_key, ..self.fences() }.restrip());
         let parent_sep = partial_restore(
             0,
             &[self.prefix(key_in_self), truncated_sep_key.0],
@@ -363,13 +358,12 @@ impl HashLeaf {
         Ok(())
     }
 
-    pub fn fence(&self, upper: bool) -> PrefixTruncatedKey {
-        let f = if upper {
-            &self.head.upper_fence
-        } else {
-            &self.head.lower_fence
-        };
-        PrefixTruncatedKey(short_slice(self.as_bytes(), f.offset, f.len))
+    pub fn fences(&self) -> FenceData {
+        FenceData {
+            lower_fence: PrefixTruncatedKey(short_slice(self.as_bytes(), self.head.lower_fence.offset, self.head.lower_fence.len)),
+            upper_fence: PrefixTruncatedKey(short_slice(self.as_bytes(), self.head.upper_fence.offset, self.head.upper_fence.len)),
+            prefix_len: self.head.prefix_len as usize,
+        }
     }
 
     pub fn new() -> Self {
@@ -469,8 +463,8 @@ impl HashLeaf {
         }
         self.assert_no_collide();
         debug_assert!(
-            self.fence(false) < self.fence(true)
-                || self.fence(true).0.is_empty() && self.head.prefix_len == 0
+            self.fences().lower_fence < self.fences().upper_fence
+                || self.fences().upper_fence.0.is_empty() && self.head.prefix_len == 0
         );
         for s in self.slots() {
             debug_assert!(s.offset >= self.head.data_offset);
@@ -533,17 +527,15 @@ impl HashLeaf {
         let mut tmp = Self::new();
         merge_fences(
             FatTruncatedKey {
-                remainder: self.fence(false).0,
+                remainder: self.fences().lower_fence.0,
                 prefix_len: self.head.prefix_len as usize,
             },
             separator,
             FatTruncatedKey {
-                remainder: right.fence(true).0,
+                remainder: right.fences().upper_fence.0,
                 prefix_len: right.head.prefix_len as usize,
             },
-            |lo, hi, p| {
-                tmp.set_fences(lo, hi, p as u16);
-            },
+            |f| tmp.set_fences(f),
         );
         let left = self.slots().iter().map(|s| (s, &*self));
         let right_iter = right.slots().iter().map(|s| (s, &*right));
@@ -569,13 +561,7 @@ impl HashLeaf {
 
     #[allow(dead_code)]
     fn print(&self) {
-        eprintln!(
-            "HashLeaf {:?} [{:?}..], {:?} - {:?}",
-            self as *const Self,
-            self.head.prefix_len,
-            self.fence(false).0,
-            self.fence(true).0
-        );
+        eprintln!("HashLeaf {:?}: {:?}", self as *const Self, self.fences());
         for (i, s) in self.slots().iter().enumerate() {
             eprintln!(
                 "{:?}|{:3?}|{:3?}",
@@ -591,7 +577,7 @@ impl HashLeaf {
             self.head.prefix_len as usize,
             common_prefix_len(lower, upper)
         );
-        debug_assert_eq!(self.fence(false), self.truncate(&lower));
-        debug_assert_eq!(self.fence(true), self.truncate(&upper));
+        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
+        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
     }
 }
