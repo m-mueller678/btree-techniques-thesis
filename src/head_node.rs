@@ -271,6 +271,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     };
 
     pub fn find_child_for_key(&self, key: &[u8]) -> usize {
+        if self.head.key_count == 0 { return 0; }
         let needle_head = Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
         let (lower, upper) = self.search_hint(needle_head);
         match self.as_parts().1[lower..upper].binary_search(&needle_head) {

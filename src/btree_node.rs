@@ -214,8 +214,9 @@ impl BTreeNode {
             BTreeNodeTag::HashLeaf => self
                 .hash_leaf
                 .try_merge_right(&mut (*right).hash_leaf, separator),
-            BTreeNodeTag::U64HeadNode => todo!(),
-            BTreeNodeTag::U32HeadNode => todo!(),
+            //TODO implment head node merging
+            BTreeNodeTag::U64HeadNode => Err(()),
+            BTreeNodeTag::U32HeadNode => Err(()),
         }
     }
 
