@@ -1,15 +1,12 @@
 use crate::basic_node::BasicNode;
 use crate::head_node::{U32HeadNode, U64HeadNode};
-use crate::util::{
-    common_prefix_len, get_key_from_slice, merge_fences, partial_restore, SmallBuff,
-};
+use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallBuff};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey};
 use once_cell::unsync::OnceCell;
-use std::mem::{transmute, MaybeUninit};
-use std::ops::Range;
+use std::mem::MaybeUninit;
+
 use std::ptr;
 use std::ptr::DynMetadata;
-use std::sync::Once;
 
 pub trait InnerConversionSource {
     fn fences(&self) -> FenceData;

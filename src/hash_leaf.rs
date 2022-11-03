@@ -1,5 +1,5 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, InnerConversionSource};
+use crate::inner_node::FenceData;
 use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use rustc_hash::FxHasher;

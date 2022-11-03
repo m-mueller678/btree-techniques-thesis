@@ -4,7 +4,7 @@ use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConver
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallBuff};
 use crate::{op_late, BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::ops::Range;
@@ -518,7 +518,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         Ok(())
     }
 
-    pub fn try_from_basic_node(this: &mut BTreeNode, new_tag: BTreeNodeTag) -> Result<(), ()> {
+    pub fn try_from_basic_node(this: &mut BTreeNode, _new_tag: BTreeNodeTag) -> Result<(), ()> {
         debug_assert!(this.tag() == BTreeNodeTag::BasicInner);
         unsafe {
             let src = &this.basic;

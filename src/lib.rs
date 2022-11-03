@@ -8,8 +8,8 @@ use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::inner_node::init_vtables;
 use crate::op_count::{count_op, op_late};
 use b_tree::BTree;
+use std::slice;
 use std::sync::Once;
-use std::{ptr, slice};
 
 pub mod b_tree;
 pub mod basic_node;

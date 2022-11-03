@@ -1,6 +1,6 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::head_node::{HeadNodeHead, U32HeadNode};
+use crate::head_node::U32HeadNode;
 use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice,
@@ -8,7 +8,7 @@ use crate::util::{
 };
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
-use std::ops::Range;
+
 use std::{mem, ptr};
 
 #[derive(Clone, Copy)]
