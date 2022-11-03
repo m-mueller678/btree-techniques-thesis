@@ -109,8 +109,8 @@ impl BTreeNode {
     pub fn new_leaf() -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
-            (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
-            //(*leaf).basic = BasicNode::new_leaf();
+            //(*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
+            (*leaf).basic = BasicNode::new_leaf();
             leaf
         }
     }
@@ -118,15 +118,15 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let node = Self::alloc();
-            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
+            /*(*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
                 FenceData {
                     lower_fence: PrefixTruncatedKey(&[]),
                     upper_fence: PrefixTruncatedKey(&[]),
                     prefix_len: 0,
                 },
                 child,
-            ));
-            //(*node).basic = BasicNode::new_inner(child);
+            ));*/
+            (*node).basic = BasicNode::new_inner(child);
             node
         }
     }

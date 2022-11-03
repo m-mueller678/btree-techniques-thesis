@@ -6,6 +6,12 @@ pub struct BTree {
 }
 
 impl BTree {
+    pub fn new() -> Self {
+        BTree {
+            root: BTreeNode::new_leaf(),
+        }
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) {
         assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
