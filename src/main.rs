@@ -20,7 +20,6 @@ fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
         b_tree.insert(l.unwrap().as_bytes(), value.as_slice());
     }
     let mut ret = Vec::new();
-    dbg!();
     fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<NodeData>) {
         let mut buffer = [0u8; 1 << 9];
         if node.tag().is_leaf() { return; }
@@ -49,20 +48,32 @@ fn main() {
     init();
     for name in ["access", "genome", "urls", "wiki"] {
         let mut counts = BTreeMap::new();
-        let mut cumulative = 0;
+        let mut max_counts = BTreeMap::new();
         let mut total = 0;
         let mut node_count = 0;
         for node in data_set_to_nodes(name, 24) {
-            node_count = 0;
+            node_count += 1;
+            *max_counts.entry(node.keys.iter().map(|x| x.len()).max().unwrap()).or_insert(0usize) += 1;
             for k in &node.keys {
                 *counts.entry(k.len()).or_insert(0usize) += 1;
                 total += 1;
             }
         }
         dbg!(name,node_count);
+        let mut cumulative = 0;
         for (k, v) in counts.iter().take(16) {
             cumulative += *v;
-            let frac = (cumulative as f64 / total as f64);
+            let frac = cumulative as f64 / total as f64;
+            print!("{:4}:{:4.2}%,", k, frac * 100.0);
+            if frac > 0.999 {
+                break;
+            }
+        }
+        println!();
+        let mut cumulative = 0;
+        for (k, v) in max_counts.iter().take(16) {
+            cumulative += *v;
+            let frac = cumulative as f64 / node_count as f64;
             print!("{:4}:{:4.2}%,", k, frac * 100.0);
             if frac > 0.999 {
                 break;
