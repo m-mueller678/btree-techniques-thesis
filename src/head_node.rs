@@ -334,7 +334,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         child: *mut BTreeNode,
     ) -> Result<(), ()> {
         debug_assert!(key <= self.fences().upper_fence || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0);
-        debug_assert!(key > self.fences().upper_fence || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0);
+        debug_assert!(key > self.fences().lower_fence || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0);
         debug_assert!(self.head.key_count < self.head.key_capacity);
         if let Some(key) = Head::make_fence_head(key) {
             let (head, keys, children, _) = self.as_parts_mut();

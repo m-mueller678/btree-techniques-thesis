@@ -315,6 +315,8 @@ impl HashLeaf {
             };
         }
 
+        // self.print();
+
         // split
         let (sep_slot, truncated_sep_key) =
             find_separator(self.head.count as usize, true, |i: usize| {
