@@ -179,8 +179,8 @@ impl BTreeNode {
             BTreeNodeTag::HashLeaf => unsafe {
                 self.hash_leaf.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
             },
-            BTreeNodeTag::U64HeadNode => todo!(),
-            BTreeNodeTag::U32HeadNode => todo!(),
+            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.is_underfull() },
+            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.is_underfull() },
         }
     }
 
@@ -189,8 +189,8 @@ impl BTreeNode {
             BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
             BTreeNodeTag::BasicLeaf => panic!(),
             BTreeNodeTag::HashLeaf => unreachable!(),
-            BTreeNodeTag::U64HeadNode => todo!(),
-            BTreeNodeTag::U32HeadNode => todo!(),
+            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.merge_children_check(child_index) },
+            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.merge_children_check(child_index) },
         }
     }
 

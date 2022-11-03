@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::util::{common_prefix_len, partial_restore, SmallBuff};
+use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallBuff};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
 use std::marker::PhantomData;
@@ -278,11 +278,6 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    pub fn get_child(&self, index: usize) -> *mut BTreeNode {
-        debug_assert!(index < self.head.key_count as usize + 1);
-        self.as_parts().2[index]
-    }
-
     pub fn request_space_for_child(&mut self, _key_length: usize) -> Result<usize, ()> {
         if self.head.key_count < self.head.key_capacity {
             Ok(self.head.prefix_len as usize)
@@ -539,6 +534,43 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             Ok(())
         }
     }
+
+    pub fn is_underfull(&self) -> bool {
+        self.head.key_count * 4 <= self.head.key_capacity
+    }
+
+    pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
+        if child_index == self.key_count() {
+            if child_index == 0 {
+                // only one child
+                return Err(());
+            }
+            child_index -= 1;
+        }
+        unsafe {
+            let left = &mut *self.get_child(child_index);
+            let right = self.get_child(child_index + 1);
+            let sep_key = self.as_parts().1[child_index].restore();
+            left.try_merge_right(
+                right,
+                FatTruncatedKey {
+                    remainder: &sep_key,
+                    prefix_len: self.head.prefix_len as usize,
+                },
+            )?;
+            BTreeNode::dealloc(self.get_child(child_index));
+            self.remove_slot(child_index);
+            Ok(())
+        }
+    }
+
+    pub fn remove_slot(&mut self, index: usize) {
+        let (head, keys, children, _) = self.as_parts_mut();
+        keys.copy_within(index + 1..head.key_count as usize, index);
+        children.copy_within(index + 1..head.key_count as usize + 1, index);
+        head.key_count -= 1;
+        self.update_hint(0);
+    }
 }
 
 impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
@@ -560,14 +592,18 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
     }
 
     fn key_count(&self) -> usize {
-        todo!()
+        self.head.key_count as usize
     }
 
     fn get_child(&self, index: usize) -> *mut BTreeNode {
-        todo!()
+        debug_assert!(index < self.head.key_count as usize + 1);
+        self.as_parts().2[index]
     }
 
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
-        todo!()
+        debug_assert!(index < self.head.key_count as usize);
+        //TODO avoidable copy
+        let key = self.as_parts().1[index].restore();
+        get_key_from_slice(PrefixTruncatedKey(&key), dst, strip_prefix)
     }
 }

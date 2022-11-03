@@ -121,7 +121,7 @@ impl BTree {
     #[allow(unused_variables)]
     unsafe fn validate(&self) {
         // this is very slow for large trees
-        const DO_TREE_VALIDATION: bool = true;
+        const DO_TREE_VALIDATION: bool = false;
         if DO_TREE_VALIDATION {
             (*self.root).validate_tree(&[], &[]);
         }
@@ -158,8 +158,8 @@ pub unsafe extern "C" fn btree_lookup(
     let node = &*node;
     match node.tag() {
         BTreeNodeTag::BasicInner => unreachable!(),
-        BTreeNodeTag::U64HeadNode => todo!(),
-        BTreeNodeTag::U32HeadNode => todo!(),
+        BTreeNodeTag::U64HeadNode => unreachable!(),
+        BTreeNodeTag::U32HeadNode => unreachable!(),
         BTreeNodeTag::BasicLeaf => {
             let node = &node.basic;
             let (index, found) = node.lower_bound(node.truncate(key));
