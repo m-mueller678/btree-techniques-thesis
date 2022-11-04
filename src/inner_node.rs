@@ -3,14 +3,16 @@ use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, SmallBuff};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey};
 use once_cell::unsync::OnceCell;
-use std::mem::{MaybeUninit};
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 
 use std::ptr;
 use std::ptr::DynMetadata;
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {
-    type Separator<'a>: Deref<Target=[u8]> + 'a where Self: 'a;
+    type Separator<'a>: Deref<Target=[u8]> + 'a
+        where
+            Self: 'a;
 
     fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>);
 }
@@ -239,7 +241,11 @@ pub fn merge_right<Dst: InnerConversionSink>(
     Dst::create(dst, &merge_src)
 }
 
-pub fn split_at<Src: InnerConversionSource, Left: InnerConversionSink, Right: InnerConversionSink>(
+pub fn split_at<
+    Src: InnerConversionSource,
+    Left: InnerConversionSink,
+    Right: InnerConversionSink,
+>(
     src: &Src,
     left: &mut BTreeNode,
     right: &mut BTreeNode,
@@ -275,7 +281,8 @@ pub fn split_at<Src: InnerConversionSource, Left: InnerConversionSink, Right: In
         fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
             debug_assert!(strip_prefix == 0);
             debug_assert!(index < self.len + 1);
-            self.src.get_key(self.offset + index, dst, self.strip_prefix)
+            self.src
+                .get_key(self.offset + index, dst, self.strip_prefix)
         }
 
         #[cfg(debug_assertions)]
@@ -285,26 +292,47 @@ pub fn split_at<Src: InnerConversionSource, Left: InnerConversionSink, Right: In
     }
 
     let fences = src.fences();
-    let left_fences = FenceData { upper_fence: separator, ..fences }.restrip();
-    Left::create(left, &SliceView {
-        offset: 0,
-        len: split_index,
-        src,
-        fence_data: left_fences,
-        strip_prefix: left_fences.prefix_len - fences.prefix_len,
-    }).unwrap();
-    let right_fences = FenceData { lower_fence: separator, ..fences }.restrip();
-    Right::create(right, &SliceView {
-        offset: split_index + 1,
-        len: src.key_count() - (split_index + 1),
-        src,
-        fence_data: right_fences,
-        strip_prefix: right_fences.prefix_len - fences.prefix_len,
-    }).unwrap();
+    let left_fences = FenceData {
+        upper_fence: separator,
+        ..fences
+    }
+        .restrip();
+    Left::create(
+        left,
+        &SliceView {
+            offset: 0,
+            len: split_index,
+            src,
+            fence_data: left_fences,
+            strip_prefix: left_fences.prefix_len - fences.prefix_len,
+        },
+    )
+        .unwrap();
+    let right_fences = FenceData {
+        lower_fence: separator,
+        ..fences
+    }
+        .restrip();
+    Right::create(
+        right,
+        &SliceView {
+            offset: split_index + 1,
+            len: src.key_count() - (split_index + 1),
+            src,
+            fence_data: right_fences,
+            strip_prefix: right_fences.prefix_len - fences.prefix_len,
+        },
+    )
+        .unwrap();
     Ok(())
 }
 
-pub fn split_in_place<'a, Src: SeparableInnerConversionSource, Left: InnerConversionSink, Right: InnerConversionSink>(
+pub fn split_in_place<
+    'a,
+    Src: SeparableInnerConversionSource,
+    Left: InnerConversionSink,
+    Right: InnerConversionSink,
+>(
     node: &'a mut BTreeNode,
     parent: &mut BTreeNode,
     index_in_parent: usize,
@@ -316,12 +344,27 @@ pub fn split_in_place<'a, Src: SeparableInnerConversionSource, Left: InnerConver
             let src: &Src = reinterpret(node);
             let (split_index, separator) = src.find_separator();
             let separator = &*separator;
-            let parent_prefix_len = parent.request_space_for_child(separator.len() + src.fences().prefix_len)?;
+            let parent_prefix_len =
+                parent.request_space_for_child(separator.len() + src.fences().prefix_len)?;
             let left = BTreeNode::alloc();
             right = BTreeNode::new_uninit();
-            split_at::<Src, Left, Right>(src, &mut *left, &mut right, split_index, PrefixTruncatedKey(separator))?;
-            let restored_separator = partial_restore(0, &[&key_in_node[..src.fences().prefix_len], separator], parent_prefix_len);
-            parent.insert_child(index_in_parent, PrefixTruncatedKey(&restored_separator), left)?;
+            split_at::<Src, Left, Right>(
+                src,
+                &mut *left,
+                &mut right,
+                split_index,
+                PrefixTruncatedKey(separator),
+            )?;
+            let restored_separator = partial_restore(
+                0,
+                &[&key_in_node[..src.fences().prefix_len], separator],
+                parent_prefix_len,
+            );
+            parent.insert_child(
+                index_in_parent,
+                PrefixTruncatedKey(&restored_separator),
+                left,
+            )?;
         }
         ptr::write(node, right);
         Ok(())

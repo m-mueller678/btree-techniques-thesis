@@ -1,7 +1,12 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place, SeparableInnerConversionSource};
-use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff};
+use crate::inner_node::{
+    merge_right, split_in_place, FenceData, InnerConversionSink, InnerConversionSource,
+    SeparableInnerConversionSource,
+};
+use crate::util::{
+    common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff,
+};
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
 use std::fmt::Debug;
@@ -521,7 +526,12 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     ) -> Result<(), ()> {
         unsafe {
             let mut tmp = BTreeNode::new_uninit();
-            merge_right::<Self>(&mut tmp, self, right_any.to_inner_conversion_source(), separator)?;
+            merge_right::<Self>(
+                &mut tmp,
+                self,
+                right_any.to_inner_conversion_source(),
+                separator,
+            )?;
             ptr::write(right_any, tmp);
         }
         return Ok(());
@@ -542,7 +552,8 @@ unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
         let mut buffer = [0u8; 16];
         for i in 0..len {
             let key_len = src.get_key(i, buffer.as_mut_slice(), 0)?;
-            keys[i] = Head::make_fence_head(PrefixTruncatedKey(&buffer[buffer.len() - key_len..])).ok_or(())?;
+            keys[i] = Head::make_fence_head(PrefixTruncatedKey(&buffer[buffer.len() - key_len..]))
+                .ok_or(())?;
         }
         for i in 0..len + 1 {
             children[i] = src.get_child(i);

@@ -4,11 +4,11 @@
 #![feature(ptr_metadata)]
 extern crate core;
 
-use std::ops::Deref;
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::inner_node::init_vtables;
-use crate::op_count::{count_op};
+use crate::op_count::count_op;
 use b_tree::BTree;
+use std::ops::Deref;
 use std::slice;
 use std::sync::Once;
 

@@ -121,7 +121,8 @@ impl BTree {
     }
 
     unsafe fn validate(&self) {
-        #[cfg(debug_assertions)]{
+        #[cfg(debug_assertions)]
+        {
             // this is very slow for large trees
             const DO_TREE_VALIDATION: bool = true;
             if DO_TREE_VALIDATION && crate::op_count::op_late() {

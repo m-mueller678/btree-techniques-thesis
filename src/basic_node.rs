@@ -1,8 +1,14 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::U32HeadNode;
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place, SeparableInnerConversionSource};
-use crate::util::{common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff, reinterpret_mut};
+use crate::inner_node::{
+    merge_right, split_in_place, FenceData, InnerConversionSink, InnerConversionSource,
+    SeparableInnerConversionSource,
+};
+use crate::util::{
+    common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
+    short_slice, trailing_bytes, SmallBuff,
+};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
@@ -415,7 +421,12 @@ impl BasicNode {
         key_in_node: &[u8],
     ) -> Result<(), ()> {
         if self.head.tag.is_inner() {
-            return split_in_place::<BasicNode, BasicNode, BasicNode>(unsafe { reinterpret_mut(self) }, parent, index_in_parent, key_in_node);
+            return split_in_place::<BasicNode, BasicNode, BasicNode>(
+                unsafe { reinterpret_mut(self) },
+                parent,
+                index_in_parent,
+                key_in_node,
+            );
         }
 
         // split
@@ -726,24 +737,25 @@ unsafe impl InnerConversionSink for BasicNode {
         if this.free_space() < size_of::<BasicSlot>() * key_count {
             return Err(());
         };
-        let old_count = this.head.count as usize + key_count;
+        let old_count = this.head.count as usize;
         this.head.count += key_count as u16;
         let mut offset = this.head.data_offset as usize;
         let min_offset = offset - this.free_space();
         unsafe {
             for i in 0..key_count {
-                let bytes = &mut this.as_bytes_mut();
+                let bytes = this.as_bytes_mut();
                 let child_bytes = (src.get_child(i) as usize).to_ne_bytes();
                 let val_len = get_key_from_slice(
                     PrefixTruncatedKey(child_bytes.as_slice()),
                     &mut bytes[min_offset..offset],
                     0,
                 )?;
+                debug_assert_eq!(val_len, 8);
                 offset -= val_len;
                 let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
                 let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
-                this.data.slots[old_count + i] = BasicSlot {
+                this.slots_mut()[old_count + i] = BasicSlot {
                     offset: offset as u16,
                     key_len: key_len as u16,
                     val_len: val_len as u16,
@@ -753,13 +765,14 @@ unsafe impl InnerConversionSink for BasicNode {
         }
         this.head.space_used += this.head.data_offset - offset as u16;
         this.head.data_offset = offset as u16;
+        this.make_hint();
+        this.validate();
         Ok(())
     }
 }
 
 impl SeparableInnerConversionSource for BasicNode {
     type Separator<'a> = PrefixTruncatedKey<'a>;
-
 
     fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>) {
         find_separator(

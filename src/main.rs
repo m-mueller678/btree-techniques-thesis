@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use btree::{init};
 use btree::b_tree::BTree;
 use btree::btree_node::BTreeNode;
+use btree::init;
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 
 struct NodeData {
     depth: usize,
@@ -22,7 +22,9 @@ fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
     let mut ret = Vec::new();
     fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<NodeData>) {
         let mut buffer = [0u8; 1 << 9];
-        if node.tag().is_leaf() { return; }
+        if node.tag().is_leaf() {
+            return;
+        }
         let node = node.to_inner_conversion_source();
         let fences = node.fences();
         let mut data = NodeData {
@@ -53,13 +55,15 @@ fn main() {
         let mut node_count = 0;
         for node in data_set_to_nodes(name, 24) {
             node_count += 1;
-            *max_counts.entry(node.keys.iter().map(|x| x.len()).max().unwrap()).or_insert(0usize) += 1;
+            *max_counts
+                .entry(node.keys.iter().map(|x| x.len()).max().unwrap())
+                .or_insert(0usize) += 1;
             for k in &node.keys {
                 *counts.entry(k.len()).or_insert(0usize) += 1;
                 total += 1;
             }
         }
-        dbg!(name,node_count);
+        dbg!(name, node_count);
         let mut cumulative = 0;
         for (k, v) in counts.iter().take(16) {
             cumulative += *v;
