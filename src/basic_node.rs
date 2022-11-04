@@ -602,15 +602,6 @@ impl BasicNode {
         );
         debug_assert_eq!(tmp.head.prefix_len, new_prefix_len);
         self.copy_key_value_range(self.slots(), &mut tmp, separator);
-        if is_inner {
-            let separator_prefix_len_diff = new_prefix_len as usize - separator.prefix_len;
-            tmp.head.count += 1;
-            tmp.store_key_value(
-                self.head.count as usize,
-                PrefixTruncatedKey(&separator.remainder[separator_prefix_len_diff..]),
-                &(self.head.upper as usize).to_ne_bytes(),
-            );
-        }
         right.copy_key_value_range(right.slots(), &mut tmp, separator);
         tmp.make_hint();
         right_any.basic = tmp;
