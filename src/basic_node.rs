@@ -740,7 +740,7 @@ unsafe impl InnerConversionSink for BasicNode {
         let min_offset = offset - this.free_space();
         unsafe {
             for i in 0..key_count {
-                let bytes = &mut this.as_bytes_mut()[min_offset..offset];
+                let bytes = &mut this.as_bytes_mut();
                 let child_bytes = (src.get_child(i) as usize).to_ne_bytes();
                 let val_len = get_key_from_slice(
                     PrefixTruncatedKey(child_bytes.as_slice()),
