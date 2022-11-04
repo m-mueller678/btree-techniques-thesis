@@ -1,5 +1,3 @@
-use tracing::trace;
-
 #[cfg(debug_assertions)]
 #[no_mangle]
 static OP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -19,7 +17,7 @@ pub fn count_op() {
                 .pretty()
                 .init();
         }
-        trace!(op_count = _new_count);
+        tracing::trace!(op_count = _new_count);
     }
 }
 

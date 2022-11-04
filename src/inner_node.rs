@@ -278,6 +278,7 @@ pub fn split_at<Src: InnerConversionSource, Left: InnerConversionSink, Right: In
             self.src.get_key(self.offset + index, dst, self.strip_prefix)
         }
 
+        #[cfg(debug_assertions)]
         fn print(&self) {
             unimplemented!();
         }

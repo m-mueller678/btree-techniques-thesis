@@ -1,4 +1,4 @@
-use crate::{op_late, BTreeNode, BTreeNodeTag, PAGE_SIZE};
+use crate::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use std::ptr;
 
 pub struct BTree {
@@ -121,10 +121,12 @@ impl BTree {
     }
 
     unsafe fn validate(&self) {
-        // this is very slow for large trees
-        const DO_TREE_VALIDATION: bool = true && cfg!(debug_assertions);
-        if DO_TREE_VALIDATION && op_late() {
-            self.force_validate();
+        #[cfg(debug_assertions)]{
+            // this is very slow for large trees
+            const DO_TREE_VALIDATION: bool = true;
+            if DO_TREE_VALIDATION && crate::op_count::op_late() {
+                self.force_validate();
+            }
         }
     }
 

@@ -1,11 +1,8 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::U32HeadNode;
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
-use crate::util::{
-    common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice,
-    trailing_bytes, SmallBuff,
-};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place, SeparableInnerConversionSource};
+use crate::util::{common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice, trailing_bytes, SmallBuff, reinterpret_mut};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
@@ -417,6 +414,10 @@ impl BasicNode {
         index_in_parent: usize,
         key_in_node: &[u8],
     ) -> Result<(), ()> {
+        if self.head.tag.is_inner() {
+            return split_in_place::<BasicNode, BasicNode, BasicNode>(unsafe { reinterpret_mut(self) }, parent, index_in_parent, key_in_node);
+        }
+
         // split
         let (sep_slot, truncated_sep_key) = self.find_separator();
         let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
@@ -495,15 +496,6 @@ impl BasicNode {
             }
         }
         Ok(())
-    }
-
-    /// returns slot_id and prefix truncated separator
-    fn find_separator(&self) -> (usize, PrefixTruncatedKey) {
-        find_separator(
-            self.head.count as usize,
-            self.head.tag.is_leaf(),
-            |i: usize| self.slots()[i].key(self.as_bytes()),
-        )
     }
 
     pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
@@ -762,5 +754,18 @@ unsafe impl InnerConversionSink for BasicNode {
         this.head.space_used += this.head.data_offset - offset as u16;
         this.head.data_offset = offset as u16;
         Ok(())
+    }
+}
+
+impl SeparableInnerConversionSource for BasicNode {
+    type Separator<'a> = PrefixTruncatedKey<'a>;
+
+
+    fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>) {
+        find_separator(
+            self.head.count as usize,
+            self.head.tag.is_leaf(),
+            |i: usize| self.slots()[i].key(self.as_bytes()),
+        )
     }
 }

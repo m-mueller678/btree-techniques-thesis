@@ -2,12 +2,11 @@ use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
 use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place, SeparableInnerConversionSource};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff};
-use crate::{op_late, BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
+use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
-use std::ops::Range;
 use std::{mem, ptr};
 
 pub type U64HeadNode = HeadNode<u64>;
@@ -520,17 +519,10 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         right_any: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
-        if op_late() {
-            self.print();
-            right_any.to_inner_conversion_source().print();
-        }
         unsafe {
             let mut tmp = BTreeNode::new_uninit();
             merge_right::<Self>(&mut tmp, self, right_any.to_inner_conversion_source(), separator)?;
             ptr::write(right_any, tmp);
-        }
-        if op_late() {
-            right_any.to_inner_conversion_source().print();
         }
         return Ok(());
     }
