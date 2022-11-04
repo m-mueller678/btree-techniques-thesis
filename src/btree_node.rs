@@ -1,7 +1,7 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{U32HeadNode, U64HeadNode};
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
+use crate::inner_node::{InnerConversionSink, InnerConversionSource};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::intrinsics::transmute;

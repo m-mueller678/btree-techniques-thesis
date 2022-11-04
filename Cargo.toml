@@ -18,7 +18,6 @@ tracing-subscriber = { version = "0.3.16" }
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
-opt-level = 3
 
 [profile.release]
 lto = true

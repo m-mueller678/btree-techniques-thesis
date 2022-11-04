@@ -104,3 +104,7 @@ pub fn get_key_from_slice(
     dst[dst_len - src.len()..].copy_from_slice(src);
     Ok(src.len())
 }
+
+pub unsafe fn reinterpret<'a, A: 'a, B: 'a>(a: &'a A) -> &'a B { &*(a as *const A as usize as *const B) }
+
+pub unsafe fn reinterpret_mut<'a, A: 'a, B: 'a>(a: &'a mut A) -> &'a mut B { &mut *(a as *mut A as usize as *mut B) }

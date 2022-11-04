@@ -122,7 +122,7 @@ impl BTree {
 
     unsafe fn validate(&self) {
         // this is very slow for large trees
-        const DO_TREE_VALIDATION: bool = true;
+        const DO_TREE_VALIDATION: bool = true && cfg!(debug_assertions);
         if DO_TREE_VALIDATION && op_late() {
             self.force_validate();
         }

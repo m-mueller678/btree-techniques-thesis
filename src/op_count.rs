@@ -1,13 +1,14 @@
 use tracing::trace;
 
 #[cfg(debug_assertions)]
+#[no_mangle]
 static OP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn count_op() {
     #[cfg(debug_assertions)]
     {
         let _new_count = OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if _new_count < OP_THRESHOLD && OP_THRESHOLD % 1024 == 0 {
+        if _new_count < OP_THRESHOLD && _new_count % 1024 == 0 {
             dbg!(_new_count);
         }
         if _new_count == OP_THRESHOLD {

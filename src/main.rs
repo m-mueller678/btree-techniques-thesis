@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use btree::{btree_insert, btree_new, init};
+use btree::{init};
 use btree::b_tree::BTree;
 use btree::btree_node::BTreeNode;
 

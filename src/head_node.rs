@@ -1,7 +1,7 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
-use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallBuff};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place, SeparableInnerConversionSource};
+use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff};
 use crate::{op_late, BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
 use smallvec::{SmallVec, ToSmallVec};
 use std::fmt::Debug;
@@ -13,7 +13,7 @@ use std::{mem, ptr};
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
 
-pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> {
+pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> + Debug + 'static {
     const TAG: BTreeNodeTag;
     const HINT_COUNT: usize;
 
@@ -398,84 +398,12 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         index_in_parent: usize,
         key_in_node: &[u8],
     ) -> Result<(), ()> {
-        // split
-        let (sep_slot, truncated_sep_key) =
-            find_separator(self.head.key_count as usize, false, |i| {
-                self.as_parts().1[i]
-            });
-        let full_sep_key_len = truncated_sep_key.len() + self.head.prefix_len as usize;
-        let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let truncated_sep_key = truncated_sep_key.restore();
-        let truncated_sep_key = PrefixTruncatedKey(&truncated_sep_key);
-        let node_left;
-        let mut node_right;
-        let node_left_raw;
-        unsafe {
-            node_left_raw = BTreeNode::alloc();
-            node_left = (&mut *node_left_raw).write_inner(Self::new(
-                FenceData {
-                    upper_fence: truncated_sep_key,
-                    ..self.fences()
-                },
-                self.get_child(sep_slot as usize),
-            ));
-            node_right = Self::new(
-                FenceData {
-                    lower_fence: truncated_sep_key,
-                    ..self.fences()
-                },
-                self.get_child(self.head.key_count as usize),
-            );
-        };
-        let sep_buffer = partial_restore(
-            0,
-            &[self.prefix(key_in_node), truncated_sep_key.0],
-            parent_prefix_len,
-        );
-
-        let parent_sep = PrefixTruncatedKey(&sep_buffer);
-        if let Err(()) =
-        parent.insert_child(index_in_parent, parent_sep, node_left_raw as *mut BTreeNode)
-        {
-            unsafe {
-                BTreeNode::dealloc(node_left_raw as *mut BTreeNode);
-                return Err(());
-            }
-        }
-        self.copy_key_value_range(0..sep_slot, node_left, FatTruncatedKey::full(key_in_node));
-        self.copy_key_value_range(
-            sep_slot + 1..self.head.key_count as usize,
-            &mut node_right,
-            FatTruncatedKey::full(key_in_node),
-        );
-        node_left.update_hint(0);
-        node_right.update_hint(0);
-        *self = node_right;
-        Ok(())
-    }
-
-    fn copy_key_value_range(
-        &self,
-        src_range: Range<usize>,
-        dst: &mut Self,
-        _prefix_src: FatTruncatedKey,
-    ) {
-        // TODO handle reduced prefix
-        assert!(dst.head.prefix_len >= self.head.prefix_len);
-        let (src_head, src_keys, src_children, _) = self.as_parts();
-        let (dst_head, dst_keys, dst_children, _) = dst.as_parts_mut();
-        let dst_upper = dst_children[dst_head.key_count as usize];
-        let prefix_growth = (dst_head.prefix_len - src_head.prefix_len) as usize;
-        for i in src_range.clone() {
-            dst_keys[dst_head.key_count as usize + i - src_range.start] =
-                src_keys[i].strip_prefix(prefix_growth);
-        }
-        for i in src_range.clone() {
-            dst_children[dst_head.key_count as usize + i - src_range.start] = src_children[i];
-        }
-        dst_head.key_count += src_range.len() as u16;
-        debug_assert!(dst_head.key_count < dst_head.key_capacity);
-        dst_children[dst_head.key_count as usize] = dst_upper;
+        split_in_place::<Self, Self, Self>(
+            unsafe { reinterpret_mut(self) },
+            parent,
+            index_in_parent,
+            key_in_node,
+        )
     }
 
     pub fn prefix<'a>(&self, src: &'a [u8]) -> &'a [u8] {
@@ -619,10 +547,10 @@ unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
         this.head.key_count = len as u16;
         let (_, keys, children, _) = this.as_parts_mut();
         debug_assert!(size_of::<Head>() <= 8);
+        let mut buffer = [0u8; 16];
         for i in 0..len {
-            let mut buff = [0u8; 16];
-            src.get_key(i, buff.as_mut_slice(), 0)?;
-            keys[i] = Head::make_fence_head(PrefixTruncatedKey(buff.as_slice())).ok_or(())?;
+            let key_len = src.get_key(i, buffer.as_mut_slice(), 0)?;
+            keys[i] = Head::make_fence_head(PrefixTruncatedKey(&buffer[buffer.len() - key_len..])).ok_or(())?;
         }
         for i in 0..len + 1 {
             children[i] = src.get_child(i);
@@ -683,5 +611,18 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
         }
         eprintln!("upper: {:?}", children[head.key_count as usize]);
         eprintln!("fences: {:?}", self.fences());
+    }
+}
+
+impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
+    type Separator<'a> = SmallVec<[u8; 16]>;
+
+    fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>) {
+        let (sep_slot, truncated_sep_key) =
+            find_separator(self.head.key_count as usize, false, |i| {
+                self.as_parts().1[i]
+            });
+        let truncated_sep_key = truncated_sep_key.restore();
+        (sep_slot, truncated_sep_key)
     }
 }

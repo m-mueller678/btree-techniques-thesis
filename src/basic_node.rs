@@ -1,7 +1,7 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::U32HeadNode;
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice,
     trailing_bytes, SmallBuff,
@@ -528,8 +528,6 @@ impl BasicNode {
                     return Err(());
                 }
             }
-            let left = &mut *self.get_child(child_index);
-            let right = self.get_child(child_index + 1);
             left.try_merge_right(
                 right,
                 FatTruncatedKey {
