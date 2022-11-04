@@ -331,8 +331,9 @@ impl HashLeaf {
             });
         let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
         let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let node_left_raw = BTreeNode::alloc();
+        let node_left_raw;
         let node_left = unsafe {
+            node_left_raw = BTreeNode::alloc();
             (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
             &mut (*node_left_raw).hash_leaf
         };

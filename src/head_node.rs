@@ -405,12 +405,13 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             });
         let full_sep_key_len = truncated_sep_key.len() + self.head.prefix_len as usize;
         let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let node_left_raw = BTreeNode::alloc();
         let truncated_sep_key = truncated_sep_key.restore();
         let truncated_sep_key = PrefixTruncatedKey(&truncated_sep_key);
         let node_left;
         let mut node_right;
+        let node_left_raw;
         unsafe {
+            node_left_raw = BTreeNode::alloc();
             node_left = (&mut *node_left_raw).write_inner(Self::new(
                 FenceData {
                     upper_fence: truncated_sep_key,
@@ -596,13 +597,9 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             right_any.to_inner_conversion_source().print();
         }
         unsafe {
-            let right_dyn = right_any.to_inner_conversion_source();
-            if !right_dyn.is_underfull() {
-                return Err(());
-            }
-            let mut dst = BTreeNode::new_uninit();
-            merge_right::<Self>(&mut dst, self, right_dyn, separator)?;
-            ptr::write(right_any, dst);
+            let mut tmp = BTreeNode::new_uninit();
+            merge_right::<Self>(&mut tmp, self, right_any.to_inner_conversion_source(), separator)?;
+            ptr::write(right_any, tmp);
         }
         if op_late() {
             right_any.to_inner_conversion_source().print();
@@ -611,7 +608,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     }
 }
 
-impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
+unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
     fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()> {
         let fences = src.fences();
         let this = dst.write_inner(Self::from_fences(fences));

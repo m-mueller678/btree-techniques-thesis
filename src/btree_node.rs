@@ -96,10 +96,8 @@ impl BTreeNode {
         (self, parent, index)
     }
 
-    pub fn alloc() -> *mut BTreeNode {
-        Box::into_raw(Box::new(BTreeNode {
-            raw_bytes: unsafe { mem::zeroed() },
-        }))
+    pub unsafe fn alloc() -> *mut BTreeNode {
+        Box::into_raw(Box::new(BTreeNode::new_uninit()))
     }
 
     pub unsafe fn dealloc(node: *mut BTreeNode) {

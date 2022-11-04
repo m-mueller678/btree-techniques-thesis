@@ -1,7 +1,7 @@
 use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::U32HeadNode;
-use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource};
+use crate::inner_node::{merge_right, FenceData, InnerConversionSink, InnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, short_slice,
     trailing_bytes, SmallBuff,
@@ -421,8 +421,9 @@ impl BasicNode {
         let (sep_slot, truncated_sep_key) = self.find_separator();
         let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
         let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let node_left_raw = BTreeNode::alloc();
+        let node_left_raw;
         let node_left = unsafe {
+            node_left_raw = BTreeNode::alloc();
             (*node_left_raw).basic = Self::new(self.head.tag.is_leaf());
             &mut (*node_left_raw).basic
         };
@@ -506,14 +507,27 @@ impl BasicNode {
     }
 
     pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
-        if child_index == self.slots().len() {
-            if child_index == 0 {
-                // only one child
-                return Err(());
-            }
-            child_index -= 1;
-        }
         unsafe {
+            let left;
+            let right;
+            if child_index == self.key_count() {
+                if child_index == 0 {
+                    // only one child
+                    return Err(());
+                }
+                child_index -= 1;
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !left.is_underfull() {
+                    return Err(());
+                }
+            } else {
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !right.is_underfull() {
+                    return Err(());
+                }
+            }
             let left = &mut *self.get_child(child_index);
             let right = self.get_child(child_index + 1);
             left.try_merge_right(
@@ -713,7 +727,7 @@ impl InnerConversionSource for BasicNode {
     }
 }
 
-impl InnerConversionSink for BasicNode {
+unsafe impl InnerConversionSink for BasicNode {
     fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()> {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));

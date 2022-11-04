@@ -4,9 +4,17 @@ use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, SmallB
 use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey};
 use once_cell::unsync::OnceCell;
 use std::mem::MaybeUninit;
+use std::ops::Deref;
 
 use std::ptr;
 use std::ptr::DynMetadata;
+use crate::find_separator::{find_separator, KeyRef};
+
+pub trait SeparableInnerConversionSource: InnerConversionSource {
+    type Separator<'a>: Deref<Target=[u8]> + 'a where Self: 'a;
+
+    fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>);
+}
 
 pub trait InnerConversionSource {
     fn fences(&self) -> FenceData;
@@ -18,6 +26,7 @@ pub trait InnerConversionSource {
     /// key will be written to end of dst
     /// returns length of stripped key
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()>;
+
     #[cfg(debug_assertions)]
     fn print(&self);
 }
@@ -48,9 +57,9 @@ impl FenceData<'_> {
     }
 }
 
-pub trait InnerConversionSink {
-    /// source has same prefix_len as self
-    /// on error, state of self is unspecified
+pub unsafe trait InnerConversionSink {
+    /// on error, state of dst is unspecified
+    /// on success, dst must be initialized
     fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()>;
 }
 
@@ -229,4 +238,86 @@ pub fn merge_right<Dst: InnerConversionSink>(
         separator,
     };
     Dst::create(dst, &merge_src)
+}
+
+pub fn split_at<Src: InnerConversionSource, Left: InnerConversionSink, Right: InnerConversionSink>(
+    src: &Src,
+    left: &mut BTreeNode,
+    right: &mut BTreeNode,
+    split_index: usize,
+    separator: PrefixTruncatedKey,
+) -> Result<(), ()> {
+    struct SliceView<'a, S> {
+        offset: usize,
+        len: usize,
+        src: &'a S,
+        fence_data: FenceData<'a>,
+        strip_prefix: usize,
+    }
+
+    impl<'a, S: InnerConversionSource> InnerConversionSource for SliceView<'a, S> {
+        fn fences(&self) -> FenceData {
+            self.fence_data
+        }
+
+        fn key_count(&self) -> usize {
+            self.len
+        }
+
+        fn get_child(&self, index: usize) -> *mut BTreeNode {
+            debug_assert!(index < self.len + 1);
+            self.src.get_child(self.offset + index)
+        }
+
+        fn is_underfull(&self) -> bool {
+            unimplemented!();
+        }
+
+        fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+            debug_assert!(strip_prefix == 0);
+            debug_assert!(index < self.len + 1);
+            self.src.get_key(self.offset + index, dst, self.strip_prefix)
+        }
+
+        fn print(&self) {
+            unimplemented!();
+        }
+    }
+
+    let fences = src.fences();
+    let left_fences = FenceData { upper_fence: separator, ..fences };
+    Left::create(left, &SliceView {
+        offset: 0,
+        len: split_index,
+        src,
+        fence_data: left_fences,
+        strip_prefix: left_fences.prefix_len - fences.prefix_len,
+    })?;
+    let right_fences = FenceData { lower_fence: separator, ..fences };
+    Right::create(right, &SliceView {
+        offset: split_index + 1,
+        len: src.key_count() - (split_index + 1),
+        src,
+        fence_data: right_fences,
+        strip_prefix: right_fences.prefix_len - fences.prefix_len,
+    })
+}
+
+pub fn split_in_place<Src: SeparableInnerConversionSource, Left: InnerConversionSink, Right: InnerConversionSink>(
+    src: &mut Src,
+    parent: &mut BTreeNode,
+    index_in_parent: usize,
+    key_in_node: &[u8],
+) -> Result<(), ()> {
+    let (split_index, separator) = src.find_separator();
+    let separator = &*separator;
+    let parent_prefix_len = parent.request_space_for_child(separator.len() + src.fences().prefix_len)?;
+    unsafe {
+        let left = BTreeNode::alloc();
+        let mut right = BTreeNode::new_uninit();
+        split_at::<Src, Left, Right>(src, &mut *left, &mut right, split_index, PrefixTruncatedKey(separator))?;
+        let restored_separator = partial_restore(0, &[&key_in_node[..src.fences().prefix_len], separator], parent_prefix_len);
+        parent.insert_child(index_in_parent, PrefixTruncatedKey(&restored_separator), left)?;
+        Ok(())
+    }
 }
