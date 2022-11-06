@@ -497,13 +497,9 @@ impl BasicNode {
         *self = node_right;
         if self.head.tag.is_inner() {
             unsafe {
-                U32HeadNode::try_from_basic_node(&mut *node_left_raw, BTreeNodeTag::U32HeadNode)
-                    .ok();
-                U32HeadNode::try_from_basic_node(
-                    &mut *(self as *mut Self as *mut BTreeNode),
-                    BTreeNodeTag::U32HeadNode,
-                )
-                    .ok();
+                //TODO this could me made static
+                U32HeadNode::try_from_any(&mut *node_left_raw).ok();
+                U32HeadNode::try_from_any(&mut *(self as *mut Self as *mut BTreeNode)).ok();
             }
         }
         Ok(())
@@ -720,7 +716,7 @@ impl InnerConversionSource for BasicNode {
 }
 
 unsafe impl InnerConversionSink for BasicNode {
-    fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()> {
+    fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
         this.set_fences(src.fences());

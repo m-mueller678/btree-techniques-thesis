@@ -17,6 +17,11 @@ pub trait SeparableInnerConversionSource: InnerConversionSource {
     fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>);
 }
 
+/// must have tag and pointers must be reinterpretable as btreenode
+pub unsafe trait NodeLayoutCompatible {}
+
+unsafe impl NodeLayoutCompatible for BTreeNode {}
+
 pub trait InnerConversionSource {
     fn fences(&self) -> FenceData;
     fn key_count(&self) -> usize;
@@ -57,11 +62,37 @@ impl FenceData<'_> {
         }
     }
 }
+/*
+impl<'a> InnerConversionSource for &'a dyn InnerConversionSource{
+    fn fences(&self) -> FenceData {
+        (*self).fences()
+    }
 
+    fn key_count(&self) -> usize {
+        (*self).key_count()
+    }
+
+    fn get_child(&self, index: usize) -> *mut BTreeNode {
+        (*self).get_child(index)
+    }
+
+    fn is_underfull(&self) -> bool {
+        (*self).is_underfull()
+    }
+
+    fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+        (*self).get_key(index,dst,strip_prefix)
+    }
+
+    fn print(&self) {
+        todo!()
+    }
+}
+*/
 pub unsafe trait InnerConversionSink {
     /// on error, state of dst is unspecified
     /// on success, dst must be initialized
-    fn create(dst: &mut BTreeNode, src: &impl InnerConversionSource) -> Result<(), ()>;
+    fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()>;
 }
 
 const INNER_COUNT: usize = 3;
