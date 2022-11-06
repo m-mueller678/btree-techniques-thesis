@@ -39,7 +39,7 @@ pub trait InnerConversionSource {
 
 /// lower and upper should have no common prefix when passed around.
 /// call restrip before if neccesary.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct FenceData<'a> {
     pub prefix_len: usize,
     pub lower_fence: PrefixTruncatedKey<'a>,
@@ -357,6 +357,7 @@ pub fn split_at<
         .unwrap();
     Ok(())
 }
+
 
 pub fn split_in_place<
     'a,

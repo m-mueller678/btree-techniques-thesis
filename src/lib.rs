@@ -21,17 +21,20 @@ pub mod head_node;
 pub mod inner_node;
 pub mod op_count;
 pub mod util;
+#[cfg(test)]
+mod tests;
 
-pub fn init() {
-    init_vtables();
+pub fn ensure_init() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        init_vtables();
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
-    static INIT: Once = Once::new();
-    INIT.call_once(init);
+    ensure_init();
     count_op();
-    crate::inner_node::init_vtables();
     Box::leak(Box::new(BTree::new()))
 }
 

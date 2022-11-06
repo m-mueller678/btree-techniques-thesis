@@ -1,6 +1,6 @@
 use btree::b_tree::BTree;
 use btree::btree_node::BTreeNode;
-use btree::init;
+use btree::{ensure_init};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -47,7 +47,7 @@ fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
 }
 
 fn main() {
-    init();
+    ensure_init();
     for name in ["access", "genome", "urls", "wiki"] {
         let mut counts = BTreeMap::new();
         let mut max_counts = BTreeMap::new();
