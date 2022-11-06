@@ -550,18 +550,16 @@ impl BasicNode {
         if self.head.tag.is_leaf() {
             debug_assert!(right_any.tag() == self.head.tag);
         } else {
-            if right_any.tag() != self.head.tag {
-                unsafe {
-                    let mut dst = BTreeNode::new_uninit();
-                    let right = right_any.to_inner_conversion_source();
-                    if !right.is_underfull() {
-                        return Err(());
-                    }
-                    merge_right::<Self>(&mut dst, self, right, separator)?;
-                    ptr::write(right_any, dst);
+            unsafe {
+                let mut dst = BTreeNode::new_uninit();
+                let right = right_any.to_inner_conversion_source();
+                if !right.is_underfull() {
+                    return Err(());
                 }
-                return Ok(());
+                merge_right::<Self>(&mut dst, self, right, separator)?;
+                ptr::write(right_any, dst);
             }
+            return Ok(());
         }
         let right = unsafe { &right_any.basic };
         let new_prefix_len = self.head.prefix_len.min(right.head.prefix_len);
