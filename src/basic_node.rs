@@ -426,7 +426,7 @@ impl BasicNode {
                 parent,
                 index_in_parent,
                 key_in_node,
-            )
+            );
         }
 
         // split
@@ -665,14 +665,16 @@ unsafe impl Node for BasicNode {
     }
 }
 
+
 unsafe impl InnerConversionSink for BasicNode {
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
         this.set_fences(src.fences());
-        if src.get_key_length_sum(0..key_count) + key_count * (size_of::<usize>() + size_of::<BasicSlot>()) + size_of::<BasicNodeHead>() > this.free_space() {
-            return Err(())
-        }
+
+        if this.free_space() < size_of::<BasicSlot>() * key_count {
+            return Err(());
+        };
         let old_count = this.head.count as usize;
         this.head.count += key_count as u16;
         let mut offset = this.head.data_offset as usize;
@@ -685,10 +687,10 @@ unsafe impl InnerConversionSink for BasicNode {
                     PrefixTruncatedKey(child_bytes.as_slice()),
                     &mut bytes[min_offset..offset],
                     0,
-                ).unwrap();
+                )?;
                 debug_assert_eq!(val_len, 8);
                 offset -= val_len;
-                let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0).unwrap();
+                let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
                 let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
                 this.slots_mut()[old_count + i] = BasicSlot {
