@@ -19,6 +19,7 @@ pub type U32HeadNode = HeadNode<u32>;
 pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> + Debug + 'static {
     const TAG: BTreeNodeTag;
     const HINT_COUNT: usize;
+    const MAX_LEN: usize;
 
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self>;
     fn make_needle_head(key: PrefixTruncatedKey) -> Self;
@@ -38,6 +39,7 @@ pub trait FullKeyHead: Ord + Sized + Copy + KeyRef<'static> + Debug + 'static {
 impl FullKeyHead for u64 {
     const HINT_COUNT: usize = 16;
     const TAG: BTreeNodeTag = BTreeNodeTag::U64HeadNode;
+    const MAX_LEN: usize = 7;
 
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
         if key.0.len() < 8 {
@@ -90,6 +92,7 @@ impl KeyRef<'static> for u64 {
 impl FullKeyHead for u32 {
     const HINT_COUNT: usize = 16;
     const TAG: BTreeNodeTag = BTreeNodeTag::U32HeadNode;
+    const MAX_LEN: usize = 3;
 
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
         if key.0.len() < 4 {
@@ -429,9 +432,12 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
 unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
+        let len = src.key_count();
+        if src.get_key_length_max(0..len) > Head::MAX_LEN {
+            return Err(());
+        }
         let fences = src.fences();
         let this = dst.write_inner(Self::from_fences(fences));
-        let len = src.key_count();
         if (this.head.key_capacity as usize) < len {
             return Err(());
         }
