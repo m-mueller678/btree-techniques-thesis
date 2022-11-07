@@ -670,6 +670,9 @@ unsafe impl InnerConversionSink for BasicNode {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
         this.set_fences(src.fences());
+        if src.get_key_length_sum(0..key_count) + key_count * size_of::<usize>() + size_of::<BasicNode>() > this.free_space() {
+            return Err(())
+        }
 
         if this.free_space() < size_of::<BasicSlot>() * key_count {
             return Err(());
@@ -686,10 +689,10 @@ unsafe impl InnerConversionSink for BasicNode {
                     PrefixTruncatedKey(child_bytes.as_slice()),
                     &mut bytes[min_offset..offset],
                     0,
-                )?;
+                ).unwrap();
                 debug_assert_eq!(val_len, 8);
                 offset -= val_len;
-                let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
+                let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0).unwrap();
                 offset -= key_len;
                 let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
                 this.slots_mut()[old_count + i] = BasicSlot {
