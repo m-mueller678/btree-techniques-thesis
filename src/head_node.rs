@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::{mem, ptr};
+use std::ops::Range;
 use crate::vtables::BTreeNodeTag;
 
 pub type U64HeadNode = HeadNode<u64>;
@@ -479,6 +480,16 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
         //TODO avoidable copy
         let key = self.as_parts().1[index].restore();
         get_key_from_slice(PrefixTruncatedKey(&key), dst, strip_prefix)
+    }
+
+    fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+        debug_assert!(range.end <= self.key_count());
+        self.as_parts().1[range].iter().map(|k| k.len()).sum()
+    }
+
+    fn get_key_length_max(&self, range: Range<usize>) -> usize {
+        debug_assert!(range.end <= self.key_count());
+        self.as_parts().1[range].iter().map(|k| k.len()).max().unwrap_or(0)
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::head_node::U32HeadNode;
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::head_node::{U32HeadNode, U64HeadNode};
+use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
     short_slice, SmallBuff, trailing_bytes,
@@ -10,6 +10,7 @@ use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
+use std::ops::Range;
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -419,13 +420,13 @@ impl BasicNode {
         key_in_node: &[u8],
     ) -> Result<(), ()> {
         if self.head.tag.is_inner() {
-            return split_in_place::<BasicNode, BasicNode, BasicNode>(
+            type Dst = FallbackInnerConversionSink<U64HeadNode, BasicNode>;
+            return split_in_place::<BasicNode, Dst, Dst>(
                 unsafe { reinterpret_mut(self) },
                 parent,
                 index_in_parent,
                 key_in_node,
-            );
-            //TODO try convert back?
+            )
         }
 
         // split
@@ -465,42 +466,20 @@ impl BasicNode {
                 return Err(());
             }
         }
-        if self.head.tag.is_leaf() {
-            self.copy_key_value_range(
-                &self.slots()[..=sep_slot],
-                node_left,
-                FatTruncatedKey::full(key_in_node),
-            );
-            self.copy_key_value_range(
-                &self.slots()[sep_slot + 1..],
-                &mut node_right,
-                FatTruncatedKey::full(key_in_node),
-            );
-        } else {
-            // in inner node split, separator moves to parent (count == 1 + nodeLeft->count + nodeRight->count)
-            self.copy_key_value_range(
-                &self.slots()[..sep_slot],
-                node_left,
-                FatTruncatedKey::full(key_in_node),
-            );
-            self.copy_key_value_range(
-                &self.slots()[sep_slot + 1..],
-                &mut node_right,
-                FatTruncatedKey::full(key_in_node),
-            );
-            node_left.head.upper = self.get_child(node_left.head.count as usize);
-            node_right.head.upper = self.head.upper;
-        }
+
+        self.copy_key_value_range(
+            &self.slots()[..=sep_slot],
+            node_left,
+            FatTruncatedKey::full(key_in_node),
+        );
+        self.copy_key_value_range(
+            &self.slots()[sep_slot + 1..],
+            &mut node_right,
+            FatTruncatedKey::full(key_in_node),
+        );
         node_left.make_hint();
         node_right.make_hint();
         *self = node_right;
-        if self.head.tag.is_inner() {
-            unsafe {
-                //TODO this could me made static
-                U32HeadNode::try_from_any(&mut *node_left_raw).ok();
-                U32HeadNode::try_from_any(&mut *(self as *mut Self as *mut BTreeNode)).ok();
-            }
-        }
         Ok(())
     }
 
@@ -656,6 +635,14 @@ impl InnerConversionSource for BasicNode {
 
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
         get_key_from_slice(self.slots()[index].key(self.as_bytes()), dst, strip_prefix)
+    }
+
+    fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+        self.slots()[range].iter().map(|s| s.key_len as usize).sum()
+    }
+
+    fn get_key_length_max(&self, range: Range<usize>) -> usize {
+        self.slots()[range].iter().map(|s| s.key_len as usize).max().unwrap_or(0)
     }
 }
 

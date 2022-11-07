@@ -2,7 +2,7 @@ use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinte
 use crate::{BTreeNode, FatTruncatedKey, PrefixTruncatedKey};
 use once_cell::unsync::OnceCell;
 
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 
 use std::ptr;
 
@@ -55,6 +55,8 @@ pub trait InnerConversionSource {
     /// key will be written to end of dst
     /// returns length of stripped key
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()>;
+    fn get_key_length_sum(&self, range: Range<usize>) -> usize;
+    fn get_key_length_max(&self, range: Range<usize>) -> usize;
 }
 
 /// lower and upper should have no common prefix when passed around.
@@ -83,7 +85,7 @@ impl FenceData<'_> {
     }
 }
 
-pub unsafe trait InnerConversionSink: Node {
+pub unsafe trait InnerConversionSink {
     /// on error, state of dst is unspecified
     /// on success, dst must be initialized
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()>;
@@ -98,6 +100,7 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
     struct MergeView<'a, Left: InnerConversionSource + ?Sized, Right: InnerConversionSource + ?Sized> {
         left: &'a Left,
         left_count: usize,
+        right_count: usize,
         left_fences: FenceData<'a>,
         right_fences: FenceData<'a>,
         new_prefix_len: usize,
@@ -153,7 +156,7 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
         }
 
         fn key_count(&self) -> usize {
-            self.left_count + self.right.key_count() + 1
+            self.left_count + self.right_count + 1
         }
 
         fn get_child(&self, index: usize) -> *mut BTreeNode {
@@ -200,6 +203,24 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
                 Ok(p_len + key_src_len)
             }
         }
+
+        fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+            debug_assert_eq!(range, 0..self.key_count());
+            [
+                self.left.get_key_length_sum(0..self.left_count) + self.left_count * (self.left_fences.prefix_len - self.new_prefix_len),
+                (self.separator.remainder.len() - (self.new_prefix_len - self.separator.prefix_len)),
+                self.right.get_key_length_sum(0..self.right_count) + self.right_count * (self.right_fences.prefix_len - self.new_prefix_len),
+            ].iter().sum()
+        }
+
+        fn get_key_length_max(&self, range: Range<usize>) -> usize {
+            debug_assert_eq!(range, 0..self.key_count());
+            [
+                self.left.get_key_length_sum(0..self.left_count) + (self.left_fences.prefix_len - self.new_prefix_len),
+                (self.separator.remainder.len() - (self.new_prefix_len - self.separator.prefix_len)),
+                self.right.get_key_length_sum(0..self.right_count) + (self.right_fences.prefix_len - self.new_prefix_len),
+            ].into_iter().max().unwrap()
+        }
     }
 
     let left_fences = left.fences();
@@ -209,6 +230,7 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
     let merge_src = MergeView {
         left,
         left_count: left.key_count(),
+        right_count: right.key_count(),
         left_fences,
         right_fences,
         new_prefix_len,
@@ -270,6 +292,16 @@ pub fn split_at<
             self.src
                 .get_key(self.offset + index, dst, self.strip_prefix)
         }
+
+        fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+            debug_assert_eq!(range, 0..self.key_count());
+            self.src.get_key_length_sum(self.offset..self.offset + self.len)
+        }
+
+        fn get_key_length_max(&self, range: Range<usize>) -> usize {
+            debug_assert_eq!(range, 0..self.key_count());
+            self.src.get_key_length_max(self.offset..self.offset + self.len)
+        }
     }
 
     let fences = src.fences();
@@ -307,7 +339,6 @@ pub fn split_at<
         .unwrap();
     Ok(())
 }
-
 
 pub fn split_in_place<
     'a,
@@ -350,5 +381,19 @@ pub fn split_in_place<
         }
         ptr::write(node, right);
         Ok(())
+    }
+}
+
+pub union FallbackInnerConversionSink<A: InnerConversionSink, B: InnerConversionSink> {
+    _a: std::mem::ManuallyDrop<A>,
+    _b: std::mem::ManuallyDrop<B>,
+}
+
+unsafe impl<A: InnerConversionSink, B: InnerConversionSink> InnerConversionSink for FallbackInnerConversionSink<A, B> {
+    fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
+        match A::create(dst, src) {
+            Ok(()) => Ok(()),
+            Err(()) => B::create(dst, src),
+        }
     }
 }

@@ -93,7 +93,7 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let node = Self::alloc();
-            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
+            (*node).u64_head_node = ManuallyDrop::new(U64HeadNode::new(
                 FenceData {
                     lower_fence: PrefixTruncatedKey(&[]),
                     upper_fence: PrefixTruncatedKey(&[]),
