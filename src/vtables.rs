@@ -87,4 +87,15 @@ impl BTreeNode {
             )
         }
     }
+
+    pub fn to_inner_mut(&mut self) -> &mut dyn InnerNode {
+        unsafe {
+            debug_assert!(self.tag().is_inner());
+            let vtable = INNER_VTABLES[self.tag() as usize / 2].assume_init();
+            &mut *ptr::from_raw_parts_mut(
+                self as *mut Self as *mut (),
+                vtable,
+            )
+        }
+    }
 }

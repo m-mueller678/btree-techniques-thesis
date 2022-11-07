@@ -1,5 +1,5 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, Node};
+use crate::inner_node::{FenceData, InnerNode, Node};
 use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use rustc_hash::FxHasher;
@@ -304,7 +304,7 @@ impl HashLeaf {
 
     pub fn split_node(
         &mut self,
-        parent: &mut BTreeNode,
+        parent: &mut dyn InnerNode,
         index_in_parent: usize,
         key_in_self: &[u8],
     ) -> Result<(), ()> {
@@ -359,8 +359,8 @@ impl HashLeaf {
             parent_prefix_len,
         );
         let parent_sep = PrefixTruncatedKey(&parent_sep);
-        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
-            unsafe {
+        unsafe {
+            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);
                 return Err(());
             }

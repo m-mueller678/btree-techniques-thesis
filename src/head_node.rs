@@ -280,14 +280,6 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    pub fn request_space_for_child(&mut self, _key_length: usize) -> Result<usize, ()> {
-        if self.head.key_count < self.head.key_capacity {
-            Ok(self.head.prefix_len as usize)
-        } else {
-            Err(())
-        }
-    }
-
     fn as_parts_mut(
         &mut self,
     ) -> (
@@ -334,45 +326,6 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         }
     }
 
-    /// may change node type
-    /// if Err is returned, node must be split
-    pub unsafe fn insert_child(
-        &mut self,
-        index: usize,
-        key: PrefixTruncatedKey,
-        child: *mut BTreeNode,
-    ) -> Result<(), ()> {
-        debug_assert!(
-            key <= self.fences().upper_fence
-                || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0
-        );
-        debug_assert!(
-            key > self.fences().lower_fence
-                || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0
-        );
-        debug_assert!(self.head.key_count < self.head.key_capacity);
-        if let Some(key) = Head::make_fence_head(key) {
-            let (head, keys, children, _) = self.as_parts_mut();
-            keys[..head.key_count as usize + 1]
-                .copy_within(index..head.key_count as usize, index + 1);
-            children[..head.key_count as usize + 2]
-                .copy_within(index..head.key_count as usize + 1, index + 1);
-            keys[index] = key;
-            children[index] = child;
-            head.key_count += 1;
-            self.update_hint(index);
-            Ok(())
-        } else {
-            let mut tmp = BTreeNode::new_uninit();
-            BasicNode::create(&mut tmp, self)?;
-            let self_ptr = self as *mut Self as *mut BTreeNode;
-            unsafe {
-                ptr::write(self_ptr, tmp);
-                Self::try_insert_to_basic(&mut *(self_ptr as *mut BasicNode), index, key, child)
-            }
-        }
-    }
-
     pub fn as_bytes(&self) -> &[u8; PAGE_SIZE] {
         assert_eq!(PAGE_SIZE, size_of::<Self>());
         unsafe { transmute(self as *const Self) }
@@ -385,7 +338,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     pub fn split_node(
         &mut self,
-        parent: &mut BTreeNode,
+        parent: &mut dyn InnerNode,
         index_in_parent: usize,
         key_in_node: &[u8],
     ) -> Result<(), ()> {
@@ -443,44 +396,6 @@ impl<Head: FullKeyHead> HeadNode<Head> {
             ptr::write(this, tmp);
         }
         Ok(())
-    }
-
-    pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
-        debug_assert!(child_index < self.head.key_count as usize + 1);
-        debug_assert!(unsafe { (&*self.get_child(child_index)).is_underfull() });
-        unsafe {
-            let left;
-            let right;
-            if child_index == self.key_count() {
-                if child_index == 0 {
-                    // only one child
-                    return Err(());
-                }
-                child_index -= 1;
-                left = &mut *self.get_child(child_index);
-                right = &mut *self.get_child(child_index + 1);
-                if !left.is_underfull() {
-                    return Err(());
-                }
-            } else {
-                left = &mut *self.get_child(child_index);
-                right = &mut *self.get_child(child_index + 1);
-                if !right.is_underfull() {
-                    return Err(());
-                }
-            }
-            let sep_key = self.as_parts().1[child_index].restore();
-            left.try_merge_right(
-                right,
-                FatTruncatedKey {
-                    remainder: &sep_key,
-                    prefix_len: self.head.prefix_len as usize,
-                },
-            )?;
-            BTreeNode::dealloc(self.get_child(child_index));
-            self.remove_slot(child_index);
-            Ok(())
-        }
     }
 
     pub fn remove_slot(&mut self, index: usize) {
@@ -605,4 +520,89 @@ impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
     }
 }
 
-impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {}
+impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {
+    fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
+        debug_assert!(child_index < self.head.key_count as usize + 1);
+        debug_assert!(unsafe { (&*self.get_child(child_index)).is_underfull() });
+        unsafe {
+            let left;
+            let right;
+            if child_index == self.key_count() {
+                if child_index == 0 {
+                    // only one child
+                    return Err(());
+                }
+                child_index -= 1;
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !left.is_underfull() {
+                    return Err(());
+                }
+            } else {
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !right.is_underfull() {
+                    return Err(());
+                }
+            }
+            let sep_key = self.as_parts().1[child_index].restore();
+            left.try_merge_right(
+                right,
+                FatTruncatedKey {
+                    remainder: &sep_key,
+                    prefix_len: self.head.prefix_len as usize,
+                },
+            )?;
+            BTreeNode::dealloc(self.get_child(child_index));
+            self.remove_slot(child_index);
+            Ok(())
+        }
+    }
+
+    /// may change node type
+    /// if Err is returned, node must be split
+    unsafe fn insert_child(
+        &mut self,
+        index: usize,
+        key: PrefixTruncatedKey,
+        child: *mut BTreeNode,
+    ) -> Result<(), ()> {
+        debug_assert!(
+            key <= self.fences().upper_fence
+                || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0
+        );
+        debug_assert!(
+            key > self.fences().lower_fence
+                || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0
+        );
+        debug_assert!(self.head.key_count < self.head.key_capacity);
+        if let Some(key) = Head::make_fence_head(key) {
+            let (head, keys, children, _) = self.as_parts_mut();
+            keys[..head.key_count as usize + 1]
+                .copy_within(index..head.key_count as usize, index + 1);
+            children[..head.key_count as usize + 2]
+                .copy_within(index..head.key_count as usize + 1, index + 1);
+            keys[index] = key;
+            children[index] = child;
+            head.key_count += 1;
+            self.update_hint(index);
+            Ok(())
+        } else {
+            let mut tmp = BTreeNode::new_uninit();
+            BasicNode::create(&mut tmp, self)?;
+            let self_ptr = self as *mut Self as *mut BTreeNode;
+            unsafe {
+                ptr::write(self_ptr, tmp);
+                Self::try_insert_to_basic(&mut *(self_ptr as *mut BasicNode), index, key, child)
+            }
+        }
+    }
+
+    fn request_space_for_child(&mut self, _key_length: usize) -> Result<usize, ()> {
+        if self.head.key_count < self.head.key_capacity {
+            Ok(self.head.prefix_len as usize)
+        } else {
+            Err(())
+        }
+    }
+}

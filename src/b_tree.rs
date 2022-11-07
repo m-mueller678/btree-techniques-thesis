@@ -90,22 +90,22 @@ impl BTree {
         }
         let success = match (*node).tag() {
             BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
-                (*node).basic.split_node(&mut *parent, index_in_parent, key)
+                (*node).basic.split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
             }
             BTreeNodeTag::HashLeaf => {
                 (&mut *node)
                     .hash_leaf
-                    .split_node(&mut *parent, index_in_parent, key)
+                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
             }
             BTreeNodeTag::U64HeadNode => {
                 (&mut *node)
                     .u64_head_node
-                    .split_node(&mut *parent, index_in_parent, key)
+                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
             }
             BTreeNodeTag::U32HeadNode => {
                 (&mut *node)
                     .u32_head_node
-                    .split_node(&mut *parent, index_in_parent, key)
+                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
             }
         };
         self.validate();
@@ -160,7 +160,7 @@ impl BTree {
                 break;
             }
             debug_assert!((*node).is_underfull());
-            if (*parent).try_merge_child(index).is_ok() && (*parent).is_underfull() {
+            if (*parent).to_inner_mut().merge_children_check(index).is_ok() && (*parent).is_underfull() {
                 self.validate();
                 merge_target = parent;
                 continue;

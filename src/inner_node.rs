@@ -7,7 +7,18 @@ use std::ops::Deref;
 use std::ptr;
 
 
-pub trait InnerNode: InnerConversionSource + Node {}
+pub trait InnerNode: InnerConversionSource + Node {
+    fn merge_children_check(&mut self, child_index: usize) -> Result<(), ()>;
+
+    /// key must be truncated to length returned from request_space
+    /// node takes ownership of child on
+    /// space must be checked before with `request_space_for_child`
+    unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()>;
+
+    /// on success returns prefix length of node
+    /// insert should be called with a string truncated to that length
+    fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()>;
+}
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {
     type Separator<'a>: Deref<Target=[u8]> + 'a
@@ -304,7 +315,7 @@ pub fn split_in_place<
     Right: InnerConversionSink,
 >(
     node: &'a mut BTreeNode,
-    parent: &mut BTreeNode,
+    parent: &mut dyn InnerNode,
     index_in_parent: usize,
     key_in_node: &[u8],
 ) -> Result<(), ()> {

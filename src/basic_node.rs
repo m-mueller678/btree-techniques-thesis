@@ -414,7 +414,7 @@ impl BasicNode {
 
     pub fn split_node(
         &mut self,
-        parent: &mut BTreeNode,
+        parent: &mut dyn InnerNode,
         index_in_parent: usize,
         key_in_node: &[u8],
     ) -> Result<(), ()> {
@@ -458,8 +458,8 @@ impl BasicNode {
                 .restrip(),
         );
         let parent_sep = PrefixTruncatedKey(&sep_buffer);
-        if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
-            unsafe {
+        unsafe {
+            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);
                 return Err(());
             }
@@ -501,42 +501,6 @@ impl BasicNode {
             }
         }
         Ok(())
-    }
-
-    pub fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
-        unsafe {
-            let left;
-            let right;
-            if child_index == self.key_count() {
-                if child_index == 0 {
-                    // only one child
-                    return Err(());
-                }
-                child_index -= 1;
-                left = &mut *self.get_child(child_index);
-                right = &mut *self.get_child(child_index + 1);
-                if !left.is_underfull() {
-                    return Err(());
-                }
-            } else {
-                left = &mut *self.get_child(child_index);
-                right = &mut *self.get_child(child_index + 1);
-                if !right.is_underfull() {
-                    return Err(());
-                }
-            }
-            left.try_merge_right(
-                right,
-                FatTruncatedKey {
-                    remainder: self.slots()[child_index].key(self.as_bytes()).0,
-                    prefix_len: self.head.prefix_len as usize,
-                },
-            )?;
-            BTreeNode::dealloc(self.get_child(child_index));
-            self.remove_slot(child_index);
-            self.validate();
-            Ok(())
-        }
     }
 
     pub fn merge_right(
@@ -768,4 +732,50 @@ impl SeparableInnerConversionSource for BasicNode {
     }
 }
 
-impl InnerNode for BasicNode {}
+impl InnerNode for BasicNode {
+    fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
+        unsafe {
+            let left;
+            let right;
+            if child_index == self.key_count() {
+                if child_index == 0 {
+                    // only one child
+                    return Err(());
+                }
+                child_index -= 1;
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !left.is_underfull() {
+                    return Err(());
+                }
+            } else {
+                left = &mut *self.get_child(child_index);
+                right = &mut *self.get_child(child_index + 1);
+                if !right.is_underfull() {
+                    return Err(());
+                }
+            }
+            left.try_merge_right(
+                right,
+                FatTruncatedKey {
+                    remainder: self.slots()[child_index].key(self.as_bytes()).0,
+                    prefix_len: self.head.prefix_len as usize,
+                },
+            )?;
+            BTreeNode::dealloc(self.get_child(child_index));
+            self.remove_slot(child_index);
+            self.validate();
+            Ok(())
+        }
+    }
+
+    unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
+        self.raw_insert(index, key, &(child as usize).to_ne_bytes());
+        Ok(())
+    }
+
+    fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
+        self.request_space(self.space_needed(key_length, size_of::<*mut BTreeNode>())
+        )
+    }
+}

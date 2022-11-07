@@ -5,7 +5,7 @@ use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, m
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
-use std::mem::{ManuallyDrop, size_of};
+use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 
 
@@ -103,65 +103,6 @@ impl BTreeNode {
             ));
             //(*node).basic = BasicNode::new_inner(child);
             node
-        }
-    }
-
-    /// on success returns prefix length of node
-    /// insert should be called with a string truncated to that length
-    pub fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
-        match self.tag() {
-            BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => unreachable!(),
-            BTreeNodeTag::BasicInner => unsafe {
-                self.basic.request_space(
-                    self.basic
-                        .space_needed(key_length, size_of::<*mut BTreeNode>()),
-                )
-            },
-            BTreeNodeTag::U64HeadNode => unsafe {
-                self.u64_head_node.request_space_for_child(key_length)
-            },
-            BTreeNodeTag::U32HeadNode => unsafe {
-                self.u32_head_node.request_space_for_child(key_length)
-            },
-        }
-    }
-
-    /// key must be truncated to length returned from request_space
-    pub fn insert_child(
-        &mut self,
-        index: usize,
-        key: PrefixTruncatedKey,
-        child: *mut BTreeNode,
-    ) -> Result<(), ()> {
-        match self.tag() {
-            BTreeNodeTag::BasicInner => unsafe {
-                self.basic
-                    .raw_insert(index, key, &(child as usize).to_ne_bytes());
-                Ok(())
-            },
-            BTreeNodeTag::U64HeadNode => unsafe {
-                U64HeadNode::insert_child(&mut self.u64_head_node, index, key, child)
-            },
-            BTreeNodeTag::U32HeadNode => unsafe {
-                U32HeadNode::insert_child(&mut self.u32_head_node, index, key, child)
-            },
-            BTreeNodeTag::HashLeaf | BTreeNodeTag::BasicLeaf => {
-                unreachable!()
-            }
-        }
-    }
-
-    pub fn try_merge_child(&mut self, child_index: usize) -> Result<(), ()> {
-        match self.tag() {
-            BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
-            BTreeNodeTag::BasicLeaf => panic!(),
-            BTreeNodeTag::HashLeaf => unreachable!(),
-            BTreeNodeTag::U64HeadNode => unsafe {
-                self.u64_head_node.merge_children_check(child_index)
-            },
-            BTreeNodeTag::U32HeadNode => unsafe {
-                self.u32_head_node.merge_children_check(child_index)
-            },
         }
     }
 
