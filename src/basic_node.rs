@@ -670,13 +670,9 @@ unsafe impl InnerConversionSink for BasicNode {
         let key_count = src.key_count();
         let this = dst.write_inner(BasicNode::new_inner(src.get_child(key_count)));
         this.set_fences(src.fences());
-        if src.get_key_length_sum(0..key_count) + key_count * size_of::<usize>() + size_of::<BasicNode>() > this.free_space() {
+        if src.get_key_length_sum(0..key_count) + key_count * (size_of::<usize>() + size_of::<BasicSlot>()) + size_of::<BasicNodeHead>() > this.free_space() {
             return Err(())
         }
-
-        if this.free_space() < size_of::<BasicSlot>() * key_count {
-            return Err(());
-        };
         let old_count = this.head.count as usize;
         this.head.count += key_count as u16;
         let mut offset = this.head.data_offset as usize;
