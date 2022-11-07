@@ -605,6 +605,7 @@ unsafe impl Node for HashLeaf {
         self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
     }
 
+    #[cfg(debug_assertions)]
     fn print(&self) {
         eprintln!("HashLeaf {:?}: {:?}", self as *const Self, self.fences());
         for (i, s) in self.slots().iter().enumerate() {

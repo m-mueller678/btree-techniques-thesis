@@ -41,6 +41,7 @@ unsafe impl Node for BTreeNode {
         self.deref().is_underfull()
     }
 
+    #[cfg(debug_assertions)]
     fn print(&self) {
         self.deref().print()
     }
