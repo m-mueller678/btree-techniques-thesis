@@ -1,18 +1,16 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::inner_node::{
-    merge_right, split_in_place, FenceData, InnerConversionSink, InnerConversionSource,
-    SeparableInnerConversionSource,
-};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff,
 };
-use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
+use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use smallvec::{SmallVec, ToSmallVec};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem::{align_of, size_of, transmute};
 use std::{mem, ptr};
+use crate::vtables::BTreeNodeTag;
 
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
@@ -440,7 +438,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 
     pub fn try_from_any(this: &mut BTreeNode) -> Result<(), ()> {
         let mut tmp = unsafe { BTreeNode::new_uninit() };
-        Self::create(&mut tmp, this.to_inner_conversion_source())?;
+        Self::create(&mut tmp, this.to_inner())?;
         unsafe {
             ptr::write(this, tmp);
         }
@@ -501,10 +499,10 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     ) -> Result<(), ()> {
         unsafe {
             let mut tmp = BTreeNode::new_uninit();
-            merge_right::<Self>(
+            merge::<Self, dyn InnerNode, dyn InnerNode>(
                 &mut tmp,
                 self,
-                right_any.to_inner_conversion_source(),
+                right_any.to_inner(),
                 separator,
             )?;
             ptr::write(right_any, tmp);
@@ -567,7 +565,9 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
         let key = self.as_parts().1[index].restore();
         get_key_from_slice(PrefixTruncatedKey(&key), dst, strip_prefix)
     }
+}
 
+unsafe impl<Head: FullKeyHead> Node for HeadNode<Head> {
     fn is_underfull(&self) -> bool {
         self.head.key_count * 4 <= self.head.key_capacity
     }
@@ -604,3 +604,5 @@ impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
         (sep_slot, truncated_sep_key)
     }
 }
+
+impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {}

@@ -1,5 +1,6 @@
-use crate::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
+use crate::{BTreeNode, PAGE_SIZE};
 use std::ptr;
+use crate::vtables::BTreeNodeTag;
 
 pub struct BTree {
     pub root: *mut BTreeNode,

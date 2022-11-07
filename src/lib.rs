@@ -4,13 +4,14 @@
 #![feature(ptr_metadata)]
 extern crate core;
 
-use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
-use crate::inner_node::init_vtables;
+use crate::btree_node::{BTreeNode, PAGE_SIZE};
+use crate::vtables::init_vtables;
 use crate::op_count::count_op;
 use b_tree::BTree;
 use std::ops::Deref;
 use std::slice;
 use std::sync::Once;
+
 
 pub mod b_tree;
 pub mod basic_node;
@@ -23,6 +24,7 @@ pub mod op_count;
 pub mod util;
 #[cfg(test)]
 mod tests;
+mod vtables;
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();

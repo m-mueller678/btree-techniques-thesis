@@ -2,13 +2,13 @@ use std::collections::btree_set::BTreeSet;
 use std::mem::size_of;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, split_in_place};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 use crate::{BTreeNode, ensure_init, PAGE_SIZE, PrefixTruncatedKey};
 use crate::basic_node::BasicNode;
 use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::util::get_key_from_slice;
 
-fn assert_node_eq(a: &dyn InnerConversionSource, b: &dyn InnerConversionSource) {
+fn assert_node_eq(a: &(impl InnerConversionSource + ?Sized), b: &(impl InnerConversionSource + ?Sized)) {
     let a_count = a.key_count();
     assert_eq!(a_count, b.key_count());
     assert_eq!(a.fences(), b.fences());
@@ -46,17 +46,10 @@ fn random_source(rng: &mut impl Rng, count: usize, max_key_len: usize) -> impl I
             (index * size_of::<BTreeNode>()) as *mut BTreeNode
         }
 
-        fn is_underfull(&self) -> bool {
-            unimplemented!()
-        }
 
         fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
             assert!(index < self.keys.len() - 2);
             get_key_from_slice(PrefixTruncatedKey(self.keys[index + 1].as_slice()), dst, strip_prefix)
-        }
-
-        fn print(&self) {
-            unimplemented!()
         }
     }
 
@@ -96,7 +89,7 @@ fn test_node_conversions() {
             let rng_src = random_source(&mut rng.clone(), count, max_key_len);
             let mut created = unsafe { BTreeNode::new_uninit() };
             N::create(&mut created, &rng_src).unwrap();
-            assert_node_eq(&rng_src, created.to_inner_conversion_source())
+            assert_node_eq(&rng_src, created.to_inner())
         }
     }
 

@@ -1,13 +1,13 @@
-use crate::basic_node::BasicNode;
-use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, SmallBuff};
-use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey};
+use crate::{BTreeNode, FatTruncatedKey, PrefixTruncatedKey};
 use once_cell::unsync::OnceCell;
-use std::mem::MaybeUninit;
+
 use std::ops::Deref;
 
 use std::ptr;
-use std::ptr::DynMetadata;
+
+
+pub trait InnerNode: InnerConversionSource + Node {}
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {
     type Separator<'a>: Deref<Target=[u8]> + 'a
@@ -18,23 +18,31 @@ pub trait SeparableInnerConversionSource: InnerConversionSource {
 }
 
 /// must have tag and pointers must be reinterpretable as btreenode
-pub unsafe trait NodeLayoutCompatible {}
+pub unsafe trait Node: 'static {
+    // true if at 1/4 capacity or less
+    fn is_underfull(&self) -> bool;
+    #[cfg(debug_assertions)]
+    fn print(&self);
+}
 
-unsafe impl NodeLayoutCompatible for BTreeNode {}
+unsafe impl Node for BTreeNode {
+    fn is_underfull(&self) -> bool {
+        self.deref().is_underfull()
+    }
+
+    fn print(&self) {
+        self.deref().print()
+    }
+}
 
 pub trait InnerConversionSource {
     fn fences(&self) -> FenceData;
     fn key_count(&self) -> usize;
     fn get_child(&self, index: usize) -> *mut BTreeNode;
 
-    // true if at 1/4 capacity or less
-    fn is_underfull(&self) -> bool;
     /// key will be written to end of dst
     /// returns length of stripped key
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()>;
-
-    #[cfg(debug_assertions)]
-    fn print(&self);
 }
 
 /// lower and upper should have no common prefix when passed around.
@@ -49,7 +57,7 @@ pub struct FenceData<'a> {
 #[cfg(debug_assertions)]
 #[no_mangle]
 pub unsafe extern "C" fn node_print(node: *const BTreeNode) {
-    (&*node).to_inner_conversion_source().print()
+    (&*node).print()
 }
 
 impl FenceData<'_> {
@@ -62,95 +70,31 @@ impl FenceData<'_> {
         }
     }
 }
-/*
-impl<'a> InnerConversionSource for &'a dyn InnerConversionSource{
-    fn fences(&self) -> FenceData {
-        (*self).fences()
-    }
 
-    fn key_count(&self) -> usize {
-        (*self).key_count()
-    }
-
-    fn get_child(&self, index: usize) -> *mut BTreeNode {
-        (*self).get_child(index)
-    }
-
-    fn is_underfull(&self) -> bool {
-        (*self).is_underfull()
-    }
-
-    fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
-        (*self).get_key(index,dst,strip_prefix)
-    }
-
-    fn print(&self) {
-        todo!()
-    }
-}
-*/
-pub unsafe trait InnerConversionSink {
+pub unsafe trait InnerConversionSink: Node {
     /// on error, state of dst is unspecified
     /// on success, dst must be initialized
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()>;
 }
 
-const INNER_COUNT: usize = 3;
-
-static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerConversionSource>>; INNER_COUNT] =
-    [MaybeUninit::uninit(); INNER_COUNT];
-
-/// must be called before BTreeNode methods are used
-pub fn init_vtables() {
-    fn make_inner_vtable<N: InnerConversionSource + 'static>(tag: BTreeNodeTag, index: usize) {
-        assert_eq!(tag as usize - 128, index);
-        let ptr: *mut N = ptr::null_mut();
-        let vtable = ptr::metadata(ptr as *mut dyn InnerConversionSource);
-        unsafe {
-            INNER_VTABLES[index].write(vtable);
-        }
-    }
-    make_inner_vtable::<BasicNode>(BTreeNodeTag::BasicInner, 0);
-    make_inner_vtable::<U64HeadNode>(BTreeNodeTag::U64HeadNode, 1);
-    make_inner_vtable::<U32HeadNode>(BTreeNodeTag::U32HeadNode, 2);
-}
-
-impl BTreeNode {
-    pub fn to_inner_conversion_source(&self) -> &dyn InnerConversionSource {
-        let tag = self.tag();
-        let index = tag as usize - 128;
-        unsafe {
-            &*ptr::from_raw_parts(
-                self as *const Self as *const (),
-                INNER_VTABLES[index].assume_init(),
-            )
-        }
-    }
-}
-
-pub fn merge_right<Dst: InnerConversionSink>(
+pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Right: InnerConversionSource + ?Sized>(
     dst: &mut BTreeNode,
-    left: &dyn InnerConversionSource,
-    right: &dyn InnerConversionSource,
+    left: &Left,
+    right: &Right,
     separator: FatTruncatedKey,
 ) -> Result<(), ()> {
-    debug_assert!(
-        left.is_underfull() && right.is_underfull(),
-        "check underfull first, merge_right is expensive"
-    );
-
-    struct MergeView<'a> {
-        left: &'a dyn InnerConversionSource,
+    struct MergeView<'a, Left: InnerConversionSource + ?Sized, Right: InnerConversionSource + ?Sized> {
+        left: &'a Left,
         left_count: usize,
         left_fences: FenceData<'a>,
         right_fences: FenceData<'a>,
         new_prefix_len: usize,
-        right: &'a dyn InnerConversionSource,
+        right: &'a Right,
         separator: FatTruncatedKey<'a>,
         fence_buffer: OnceCell<SmallBuff>,
     }
 
-    impl InnerConversionSource for MergeView<'_> {
+    impl<'a, Left: InnerConversionSource + ?Sized, Right: InnerConversionSource + ?Sized> InnerConversionSource for MergeView<'a, Left, Right> {
         fn fences(&self) -> FenceData {
             let left = self.left_fences;
             let right = self.right_fences;
@@ -244,15 +188,6 @@ pub fn merge_right<Dst: InnerConversionSink>(
                 Ok(p_len + key_src_len)
             }
         }
-
-        #[cfg(debug_assertions)]
-        fn print(&self) {
-            unimplemented!()
-        }
-
-        fn is_underfull(&self) -> bool {
-            unimplemented!()
-        }
     }
 
     let left_fences = left.fences();
@@ -270,6 +205,18 @@ pub fn merge_right<Dst: InnerConversionSink>(
         separator,
     };
     Dst::create(dst, &merge_src)
+}
+
+pub fn merge_to_right<Dst: InnerConversionSink>
+(left: &BTreeNode, right: &mut BTreeNode, separator: FatTruncatedKey) -> Result<(), ()> {
+    debug_assert!(left.is_underfull());
+    debug_assert!(right.is_underfull());
+    unsafe {
+        let mut tmp = BTreeNode::new_uninit();
+        merge::<Dst, dyn InnerNode, dyn InnerNode>(&mut tmp, left.to_inner(), right.to_inner(), separator)?;
+        ptr::write(right, tmp);
+    }
+    Ok(())
 }
 
 pub fn split_at<
@@ -305,20 +252,11 @@ pub fn split_at<
             self.src.get_child(self.offset + index)
         }
 
-        fn is_underfull(&self) -> bool {
-            unimplemented!();
-        }
-
         fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
             debug_assert!(strip_prefix == 0);
             debug_assert!(index < self.len + 1);
             self.src
                 .get_key(self.offset + index, dst, self.strip_prefix)
-        }
-
-        #[cfg(debug_assertions)]
-        fn print(&self) {
-            unimplemented!();
         }
     }
 

@@ -1,40 +1,17 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{U32HeadNode, U64HeadNode};
-use crate::inner_node::{InnerConversionSink, InnerConversionSource};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
-use std::mem::{size_of, ManuallyDrop};
+use std::mem::{ManuallyDrop, size_of};
 use std::{mem, ptr};
 
+
+use crate::vtables::BTreeNodeTag;
+
 pub const PAGE_SIZE: usize = 4096;
-
-#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq)]
-#[repr(u8)]
-pub enum BTreeNodeTag {
-    BasicLeaf = 0,
-    HashLeaf = 1,
-    BasicInner = 128,
-    U64HeadNode = 129,
-    U32HeadNode = 130,
-}
-
-impl BTreeNodeTag {
-    pub fn is_leaf(&self) -> bool {
-        match self {
-            BTreeNodeTag::BasicLeaf => true,
-            BTreeNodeTag::BasicInner => false,
-            BTreeNodeTag::HashLeaf => true,
-            BTreeNodeTag::U64HeadNode => false,
-            BTreeNodeTag::U32HeadNode => false,
-        }
-    }
-
-    pub fn is_inner(&self) -> bool {
-        !self.is_leaf()
-    }
-}
 
 #[repr(C)]
 pub union BTreeNode {
@@ -107,8 +84,8 @@ impl BTreeNode {
     pub fn new_leaf() -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
-            //(*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
-            (*leaf).basic = BasicNode::new_leaf();
+            (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
+            //(*leaf).basic = BasicNode::new_leaf();
             leaf
         }
     }
@@ -116,15 +93,15 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let node = Self::alloc();
-            /*(*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
+            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
                 FenceData {
                     lower_fence: PrefixTruncatedKey(&[]),
                     upper_fence: PrefixTruncatedKey(&[]),
                     prefix_len: 0,
                 },
                 child,
-            ));*/
-            (*node).basic = BasicNode::new_inner(child);
+            ));
+            //(*node).basic = BasicNode::new_inner(child);
             node
         }
     }
@@ -174,19 +151,6 @@ impl BTreeNode {
         }
     }
 
-    pub fn is_underfull(&self) -> bool {
-        match self.tag() {
-            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
-                self.basic.is_underfull()
-            },
-            BTreeNodeTag::HashLeaf => unsafe {
-                self.hash_leaf.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
-            },
-            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.is_underfull() },
-            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.is_underfull() },
-        }
-    }
-
     pub fn try_merge_child(&mut self, child_index: usize) -> Result<(), ()> {
         match self.tag() {
             BTreeNodeTag::BasicInner => unsafe { self.basic.merge_children_check(child_index) },
@@ -204,19 +168,22 @@ impl BTreeNode {
     /// merge into right,
     ///self is discarded after this
     pub unsafe fn try_merge_right(
-        &mut self,
-        right: *mut BTreeNode,
+        &self,
+        right: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
-        debug_assert!(right != self);
-        match self.tag() {
-            BTreeNodeTag::BasicInner => self.basic.merge_right(true, &mut *right, separator),
-            BTreeNodeTag::BasicLeaf => self.basic.merge_right(false, &mut *right, separator),
-            BTreeNodeTag::HashLeaf => self
-                .hash_leaf
-                .try_merge_right(&mut (*right).hash_leaf, separator),
-            BTreeNodeTag::U64HeadNode => self.u64_head_node.merge_right(&mut *right, separator),
-            BTreeNodeTag::U32HeadNode => self.u32_head_node.merge_right(&mut *right, separator),
+        debug_assert!(self.is_underfull());
+        if right.tag().is_leaf() {
+            debug_assert!(right.is_underfull());
+        }
+        match (self.tag(), right.tag()) {
+            (BTreeNodeTag::HashLeaf, BTreeNodeTag::HashLeaf) => self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator),
+            (BTreeNodeTag::BasicLeaf, BTreeNodeTag::BasicLeaf) => self.basic.merge_right(false, &mut *right, separator),
+            (lt, rt) => {
+                debug_assert!(lt.is_inner());
+                debug_assert!(rt.is_inner());
+                merge_to_right::<BasicNode>(self, right, separator)
+            }
         }
     }
 

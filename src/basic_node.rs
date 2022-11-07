@@ -1,18 +1,16 @@
-use crate::btree_node::{BTreeNode, BTreeNodeTag, PAGE_SIZE};
+use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::find_separator::find_separator;
 use crate::head_node::U32HeadNode;
-use crate::inner_node::{
-    merge_right, split_in_place, FenceData, InnerConversionSink, InnerConversionSource,
-    SeparableInnerConversionSource,
-};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
-    short_slice, trailing_bytes, SmallBuff,
+    short_slice, SmallBuff, trailing_bytes,
 };
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
+use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -542,7 +540,7 @@ impl BasicNode {
     }
 
     pub fn merge_right(
-        &mut self,
+        &self,
         is_inner: bool,
         right_any: &mut BTreeNode,
         separator: FatTruncatedKey,
@@ -552,11 +550,11 @@ impl BasicNode {
         } else {
             unsafe {
                 let mut dst = BTreeNode::new_uninit();
-                let right = right_any.to_inner_conversion_source();
+                let right = right_any.to_inner();
                 if !right.is_underfull() {
                     return Err(());
                 }
-                merge_right::<Self>(&mut dst, self, right, separator)?;
+                merge::<Self, dyn InnerNode, dyn InnerNode>(&mut dst, self, right, separator)?;
                 ptr::write(right_any, dst);
             }
             return Ok(());
@@ -694,7 +692,9 @@ impl InnerConversionSource for BasicNode {
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
         get_key_from_slice(self.slots()[index].key(self.as_bytes()), dst, strip_prefix)
     }
+}
 
+unsafe impl Node for BasicNode {
     fn is_underfull(&self) -> bool {
         self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
     }
@@ -767,3 +767,5 @@ impl SeparableInnerConversionSource for BasicNode {
         )
     }
 }
+
+impl InnerNode for BasicNode {}

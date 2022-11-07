@@ -25,7 +25,7 @@ fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
         if node.tag().is_leaf() {
             return;
         }
-        let node = node.to_inner_conversion_source();
+        let node = node.to_inner();
         let fences = node.fences();
         let mut data = NodeData {
             depth,

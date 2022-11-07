@@ -1,12 +1,13 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::FenceData;
+use crate::inner_node::{FenceData, Node};
 use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
-use crate::{BTreeNode, BTreeNodeTag, FatTruncatedKey, PrefixTruncatedKey, PAGE_SIZE};
+use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 use std::io::Write;
-use std::mem::{align_of, size_of, transmute, ManuallyDrop};
+use std::mem::{align_of, ManuallyDrop, size_of, transmute};
 use std::simd::SimdPartialEq;
+use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
 struct HashSlot {
@@ -546,7 +547,7 @@ impl HashLeaf {
     }
 
     pub fn try_merge_right(
-        &mut self,
+        &self,
         right: &mut Self,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
@@ -589,7 +590,21 @@ impl HashLeaf {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
     }
 
-    #[allow(dead_code)]
+    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
+        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
+    }
+}
+
+unsafe impl Node for HashLeaf {
+    fn is_underfull(&self) -> bool {
+        self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
+    }
+
     fn print(&self) {
         eprintln!("HashLeaf {:?}: {:?}", self as *const Self, self.fences());
         for (i, s) in self.slots().iter().enumerate() {
@@ -600,14 +615,5 @@ impl HashLeaf {
                 s.key(self.as_bytes())
             );
         }
-    }
-
-    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
-        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
     }
 }

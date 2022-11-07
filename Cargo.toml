@@ -20,7 +20,6 @@ rand_xoshiro = "0.6.0"
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
-opt-level = 3
 
 [profile.release]
 lto = true
