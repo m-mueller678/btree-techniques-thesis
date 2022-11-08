@@ -93,7 +93,7 @@ impl BTreeNode {
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
         unsafe {
             let node = Self::alloc();
-            (*node).u64_head_node = ManuallyDrop::new(U64HeadNode::new(
+            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
                 FenceData {
                     lower_fence: PrefixTruncatedKey(&[]),
                     upper_fence: PrefixTruncatedKey(&[]),
@@ -143,8 +143,8 @@ impl BTreeNode {
         match self.tag() {
             BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.remove(key) },
             BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.remove(key) },
-            BTreeNodeTag::U64HeadNode => todo!(),
-            BTreeNodeTag::U32HeadNode => todo!(),
+            BTreeNodeTag::U64HeadNode => unreachable!(),
+            BTreeNodeTag::U32HeadNode => unreachable!(),
         }
     }
 }

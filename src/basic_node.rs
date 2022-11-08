@@ -420,7 +420,7 @@ impl BasicNode {
         key_in_node: &[u8],
     ) -> Result<(), ()> {
         if self.head.tag.is_inner() {
-            type Dst = FallbackInnerConversionSink<U64HeadNode, BasicNode>;
+            type Dst = FallbackInnerConversionSink<U32HeadNode, BasicNode>;
             return split_in_place::<BasicNode, Dst, Dst>(
                 unsafe { reinterpret_mut(self) },
                 parent,
