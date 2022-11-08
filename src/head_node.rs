@@ -92,13 +92,16 @@ impl KeyRef<'static> for u64 {
 impl FullKeyHead for u32 {
     const HINT_COUNT: usize = 16;
     const TAG: BTreeNodeTag = BTreeNodeTag::U32HeadNode;
-    const MAX_LEN: usize = 3;
+    const MAX_LEN: usize = 4;
 
     fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
-        if key.0.len() < 4 {
+        debug_assert!(key.0.len() > 0);
+        if key.0.len() <= 4 {
             let mut bytes = [0; 4];
             bytes[..key.0.len()].copy_from_slice(key.0);
-            bytes[3] = key.0.len() as u8;
+            if bytes[key.0.len() - 1] == 0 {
+                return None; // collides with shorter keys
+            }
             Some(u32::from_be_bytes(bytes))
         } else {
             None
@@ -107,21 +110,26 @@ impl FullKeyHead for u32 {
 
     fn make_needle_head(key: PrefixTruncatedKey) -> Self {
         let mut bytes = [0; 4];
-        if key.0.len() < 4 {
+        if key.0.len() <= 4 {
             bytes[..key.0.len()].copy_from_slice(key.0);
-            bytes[3] = key.0.len() as u8;
+            if key.0.len() > 0 && bytes[key.0.len() - 1] == 0 {
+                // u32::from_be_bytes(bytes) represents a prefix of self, this key must come after that prefix
+                u32::from_be_bytes(bytes) + 1
+            } else {
+                u32::from_be_bytes(bytes)
+            }
         } else {
-            bytes[..3].copy_from_slice(&key.0[..3]);
-            bytes[3] = 4;
+            bytes[..4].copy_from_slice(&key.0[..4]);
+            // u32::from_be_bytes(bytes) represents a prefix of self, this key must come after that prefix
+            u32::from_be_bytes(bytes) + 1
         }
-        u32::from_be_bytes(bytes)
     }
 
     fn restore(self) -> SmallVec<[u8; 16]> {
         let mut v = self.to_be_bytes().to_smallvec();
-        let len = v[3] as usize;
-        debug_assert!(len < 4, "this was created from a needle key");
-        v.truncate(len);
+        while v.last().copied() == Some(0) {
+            v.pop();
+        }
         v
     }
 }
