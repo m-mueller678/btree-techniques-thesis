@@ -6,7 +6,10 @@ btree-debug
 /.idea
 /cmake-build-debug/
 /cmake-build-release/
+/cmake-build-relwithdebinfo/
 /target/
 /Cargo.lock
 /btree-perf
 /data/
+perf.data
+perf.data.old

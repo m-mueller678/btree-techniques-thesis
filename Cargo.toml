@@ -23,3 +23,8 @@ crate-type = ["staticlib", "lib"]
 
 [profile.release]
 lto = true
+
+[profile.local-perf]
+inherits = "release"
+debug = true
+incremental = true
