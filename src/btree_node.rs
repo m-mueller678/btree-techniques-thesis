@@ -1,13 +1,25 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{U32HeadNode, U64HeadNode};
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
+use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
+use std::ops::Range;
 
+#[cfg(feature = "inner_all")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32HeadNode, U64HeadNode>, BasicNode>;
+
+#[cfg(feature = "inner_basic")]
+pub type DefaultInnerNodeConversionSink = BasicNode;
+
+#[cfg(feature = "inner_u32")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<U32HeadNode, BasicNode>;
+
+#[cfg(feature = "inner_u64")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<U64HeadNode, BasicNode>;
 
 use crate::vtables::BTreeNodeTag;
 
@@ -91,17 +103,38 @@ impl BTreeNode {
     }
 
     pub fn new_inner(child: *mut BTreeNode) -> *mut BTreeNode {
+        struct RootSource {
+            child: *mut BTreeNode,
+        }
+        impl InnerConversionSource for RootSource {
+            fn fences(&self) -> FenceData {
+                FenceData::empty()
+            }
+
+            fn key_count(&self) -> usize {
+                0
+            }
+
+            fn get_child(&self, index: usize) -> *mut BTreeNode {
+                debug_assert_eq!(index, 0);
+                self.child
+            }
+
+            fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+                panic!()
+            }
+
+            fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+                0
+            }
+
+            fn get_key_length_max(&self, range: Range<usize>) -> usize {
+                0
+            }
+        }
         unsafe {
             let node = Self::alloc();
-            (*node).u32_head_node = ManuallyDrop::new(U32HeadNode::new(
-                FenceData {
-                    lower_fence: PrefixTruncatedKey(&[]),
-                    upper_fence: PrefixTruncatedKey(&[]),
-                    prefix_len: 0,
-                },
-                child,
-            ));
-            //(*node).basic = BasicNode::new_inner(child);
+            DefaultInnerNodeConversionSink::create(&mut *node, &RootSource { child }).unwrap();
             node
         }
     }

@@ -39,6 +39,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include "build-info.h"
 
 struct PerfEvent {
 
@@ -218,11 +219,6 @@ struct BenchmarkParameters {
         }
     }
 
-    BenchmarkParameters(std::string name = "") {
-        if (name.length())
-            setParam("name", name);
-    }
-
 private:
     std::map<std::string, std::string> params;
 };
@@ -248,10 +244,10 @@ struct PerfEventBlock {
         PerfEvent::printCounter(header, data, "time sec", e.getDuration());
         e.printReport(header, data, scale);
         if (printHeader){
-            printHeader=false;
-            std::cout << header.str() << std::endl;
+            printHeader = false;
+            std::cout << header.str() << BUILD_CSV_HEADER << std::endl;
         }
-        std::cout << data.str() << std::endl;
+        std::cout << data.str() << BUILD_CSV_VALUES << std::endl;
     }
 };
 

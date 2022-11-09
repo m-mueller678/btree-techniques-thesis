@@ -83,6 +83,14 @@ impl FenceData<'_> {
             upper_fence: PrefixTruncatedKey(&self.upper_fence.0[common..]),
         }
     }
+
+    pub fn empty() -> Self {
+        FenceData {
+            prefix_len: 0,
+            lower_fence: PrefixTruncatedKey(&[]),
+            upper_fence: PrefixTruncatedKey(&[]),
+        }
+    }
 }
 
 pub unsafe trait InnerConversionSink {

@@ -13,3 +13,5 @@ btree-debug
 /data/
 perf.data
 perf.data.old
+/build-*/
+Cargo.toml.old

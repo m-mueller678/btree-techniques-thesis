@@ -17,7 +17,15 @@ use crate::vtables::BTreeNodeTag;
 pub type U64HeadNode = HeadNode<u64>;
 pub type U32HeadNode = HeadNode<u32>;
 
+#[cfg(feature = "use-full-length_true")]
+const USE_FULL_LENGTH: bool = true;
+#[cfg(feature = "use-full-length_false")]
 const USE_FULL_LENGTH: bool = false;
+
+#[cfg(feature = "head-early-abort-create_true")]
+const HEAD_EARLY_ABORT_CREATE: bool = true;
+#[cfg(feature = "head-early-abort-create_false")]
+const HEAD_EARLY_ABORT_CREATE: bool = false;
 
 pub trait FullKeyHeadNoTag: Ord + Sized + Copy + KeyRef<'static> + Debug + 'static {
     const HINT_COUNT: usize;
@@ -462,7 +470,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
 unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
         let len = src.key_count();
-        if src.get_key_length_max(0..len) > Head::MAX_LEN {
+        if HEAD_EARLY_ABORT_CREATE && src.get_key_length_max(0..len) > Head::MAX_LEN {
             return Err(());
         }
         let fences = src.fences();

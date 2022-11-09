@@ -89,8 +89,6 @@ int main() {
     vector<string> data;
     BenchmarkParameters parameters;
 
-    parameters.setParam("name", getenv("NAME") ? getenv("NAME") : "unnamed");
-
     if (getenv("INT")) {
         vector<uint64_t> v;
         uint64_t n = atof(getenv("INT"));

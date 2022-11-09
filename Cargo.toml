@@ -22,6 +22,7 @@ bytemuck = "1.12.3"
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
+opt-level = 3
 
 [profile.release]
 lto = true
@@ -30,3 +31,14 @@ lto = true
 inherits = "release"
 debug = true
 incremental = true
+
+[features]
+default = ["use-full-length_false", "head-early-abort-create_false", "inner_u64"]
+use-full-length_true = []
+use-full-length_false = []
+head-early-abort-create_true = []
+head-early-abort-create_false = []
+inner_all = []
+inner_basic = []
+inner_u32 = []
+inner_u64 = []
