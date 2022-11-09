@@ -1,16 +1,9 @@
 use btree::b_tree::BTree;
-use btree::btree_node::BTreeNode;
 use btree::{ensure_init};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-
-struct NodeData {
-    depth: usize,
-    prefix_len: usize,
-    fences: [Vec<u8>; 2],
-    keys: Vec<Vec<u8>>,
-}
+use btree::node_stats::{btree_to_inner_node_stats, NodeData};
 
 fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
     let value = vec![24; val_len];
@@ -19,31 +12,7 @@ fn data_set_to_nodes(name: &str, val_len: usize) -> Vec<NodeData> {
     for l in f.lines() {
         b_tree.insert(l.unwrap().as_bytes(), value.as_slice());
     }
-    let mut ret = Vec::new();
-    fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<NodeData>) {
-        let mut buffer = [0u8; 1 << 9];
-        if node.tag().is_leaf() {
-            return;
-        }
-        let node = node.to_inner();
-        let fences = node.fences();
-        let mut data = NodeData {
-            depth,
-            prefix_len: fences.prefix_len,
-            fences: [fences.lower_fence.0.to_vec(), fences.upper_fence.0.to_vec()],
-            keys: vec![],
-        };
-        for i in 0..node.key_count() {
-            let key_len = node.get_key(i, &mut buffer, 0).unwrap();
-            data.keys.push(buffer[buffer.len() - key_len..].to_vec());
-        }
-        out.push(data);
-        for i in 0..node.key_count() + 1 {
-            visit(unsafe { &*node.get_child(i) }, depth + 1, out)
-        }
-    }
-    visit(unsafe { &*b_tree.root }, 0, &mut ret);
-    ret
+    btree_to_inner_node_stats(&b_tree)
 }
 
 fn main() {

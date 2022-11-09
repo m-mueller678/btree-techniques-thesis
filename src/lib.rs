@@ -11,6 +11,7 @@ use b_tree::BTree;
 use std::ops::Deref;
 use std::slice;
 use std::sync::Once;
+use crate::node_stats::print_stats;
 
 
 pub mod b_tree;
@@ -25,6 +26,7 @@ pub mod util;
 #[cfg(test)]
 mod tests;
 mod vtables;
+pub mod node_stats;
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();
@@ -81,6 +83,14 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
     count_op();
     drop(Box::<BTree>::from_raw(b_tree));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn btree_print_info(b_tree: *mut BTree) {
+    count_op();
+    if cfg!( debug_assertions ) {
+        print_stats(&*b_tree);
+    }
 }
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]

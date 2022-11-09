@@ -6,9 +6,6 @@ pub fn count_op() {
     #[cfg(debug_assertions)]
     {
         let _new_count = OP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if _new_count < OP_THRESHOLD && _new_count % 1024 == 0 {
-            dbg!(_new_count);
-        }
         if _new_count == OP_THRESHOLD {
             tracing_subscriber::fmt::fmt()
                 .with_max_level(tracing::Level::TRACE)

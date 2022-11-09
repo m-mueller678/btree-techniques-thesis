@@ -32,6 +32,8 @@ void runTest(BenchmarkParameters parameters, vector<string> &data) {
         }
     }
 
+    t.print_info();
+
     {
         // lookup
         parameters.setParam("op", "lookup");

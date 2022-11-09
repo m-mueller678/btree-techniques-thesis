@@ -41,7 +41,7 @@ pub fn init_vtables() {
     make_inner_vtables::<U32HeadNode>(BTreeNodeTag::U32HeadNode);
 }
 
-#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[repr(u8)]
 pub enum BTreeNodeTag {
     BasicLeaf = 0,

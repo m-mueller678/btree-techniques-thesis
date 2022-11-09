@@ -25,15 +25,19 @@ public:
 
     bool lookup(uint8_t *key, unsigned keyLength){
         uint64_t sizeOut=0;
-        return btree_lookup(root,key,keyLength,&sizeOut);
+        return btree_lookup(root, key, keyLength, &sizeOut);
     }
 
-    void insert(uint8_t *key, unsigned keyLength, uint8_t *payload, unsigned payloadLength){
-        btree_insert(root,key,keyLength,payload,payloadLength);
+    void insert(uint8_t *key, unsigned keyLength, uint8_t *payload, unsigned payloadLength) {
+        btree_insert(root, key, keyLength, payload, payloadLength);
     }
 
-    bool remove(uint8_t *key, unsigned keyLength){
-        return btree_remove(root,key,keyLength);
+    bool remove(uint8_t *key, unsigned keyLength) {
+        return btree_remove(root, key, keyLength);
+    }
+
+    void print_info() {
+        btree_print_info(root);
     }
 };
 

@@ -15,7 +15,7 @@ tracing = { version = "0.1.37", features = ["release_max_level_off", "max_level_
 tracing-subscriber = { version = "0.3.16" }
 rand = "0.8.5"
 rand_xoshiro = "0.6.0"
-
+counter = "0.5.7"
 [lib]
 crate-type = ["staticlib", "lib"]
 
