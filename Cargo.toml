@@ -16,6 +16,8 @@ tracing-subscriber = { version = "0.3.16" }
 rand = "0.8.5"
 rand_xoshiro = "0.6.0"
 counter = "0.5.7"
+bytemuck = "1.12.3"
+
 [lib]
 crate-type = ["staticlib", "lib"]
 
