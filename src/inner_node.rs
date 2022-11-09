@@ -295,12 +295,12 @@ pub fn split_at<
 
         fn get_key_length_sum(&self, range: Range<usize>) -> usize {
             debug_assert_eq!(range, 0..self.key_count());
-            self.src.get_key_length_sum(self.offset..self.offset + self.len)
+            self.src.get_key_length_sum(self.offset..self.offset + self.len) - self.strip_prefix * self.len
         }
 
         fn get_key_length_max(&self, range: Range<usize>) -> usize {
             debug_assert_eq!(range, 0..self.key_count());
-            self.src.get_key_length_max(self.offset..self.offset + self.len)
+            self.src.get_key_length_max(self.offset..self.offset + self.len) - self.strip_prefix
         }
     }
 
