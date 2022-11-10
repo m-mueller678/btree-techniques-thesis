@@ -64,7 +64,7 @@ unsafe impl UnsignedInt for u64 {
     }
 
     fn inc(self) -> Self {
-        self + 1
+        self.saturating_add(1)
     }
 }
 
@@ -74,7 +74,7 @@ unsafe impl UnsignedInt for u32 {
     }
 
     fn inc(self) -> Self {
-        self + 1
+        self.saturating_add(1)
     }
 }
 
@@ -91,6 +91,9 @@ impl<T: UnsignedInt> FullKeyHeadNoTag for T {
                 bytes[..key.0.len()].copy_from_slice(key.0);
                 if bytes[key.0.len() - 1] == 0 {
                     return None; // collides with shorter keys
+                }
+                if bytes.iter().all(|&x| x == 255) {
+                    return None;
                 }
                 Some(ret.swap_big_native_endian())
             } else {
