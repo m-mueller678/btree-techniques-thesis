@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
-use btree::head_node::{FullKeyHead};
+use btree::head_node::{AsciiHead, FullKeyHead, FullKeyHeadNoTag};
 
 
 fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
@@ -20,6 +20,9 @@ fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     let mut keys = SmallVec::<[(&[u8], H, bool); 1024]>::new();
     let mut offset = 0;
     rng.fill_bytes(&mut buffer);
+    for b in &mut buffer {
+        *b &= 127;
+    }
     loop {
         let fence_size = rng.gen_range(1..max_fence_len);
         let lookup_size = rng.gen_range(0..max_fence_len * 2);
@@ -67,8 +70,7 @@ fn test_thread(id: usize) {
     loop {
         let iterations = rng.gen_range(0..256);
         for _ in 0..iterations {
-            test_head::<u32>(&mut rng, 5);
-            test_head::<u64>(&mut rng, 9);
+            test_head::<AsciiHead>(&mut rng, 10);
         }
         let c = COUNTER.fetch_add(iterations, Ordering::Relaxed);
         const DISPLAY_DIV: usize = 100_000;
@@ -108,6 +110,5 @@ fn perf<H: FullKeyHead>() {
 }
 
 fn main() {
-    perf::<u32>();
-    perf::<u64>();
+    perf::<AsciiHead>()
 }

@@ -14,7 +14,7 @@ use std::ops::Range;
 use bytemuck::{bytes_of, bytes_of_mut, Pod};
 use crate::vtables::BTreeNodeTag;
 
-pub type U64HeadNode = HeadNode<u64>;
+pub type U64HeadNode = HeadNode<AsciiHead>;
 pub type U32HeadNode = HeadNode<u32>;
 
 #[cfg(feature = "use-full-length_true")]
@@ -76,6 +76,96 @@ unsafe impl UnsignedInt for u32 {
     fn inc(self) -> Self {
         self.saturating_add(1)
     }
+}
+
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct AsciiHead(u64);
+
+impl<'a> KeyRef<'a> for AsciiHead {
+    fn common_prefix_len(self, b: Self) -> usize {
+        common_prefix_len(&self.restore(), &b.restore())
+    }
+
+    fn len(self) -> usize {
+        self.restore().len()
+    }
+
+    fn truncate(self, new_len: usize) -> Self {
+        let mut v = self.restore();
+        v.truncate(new_len);
+        Self::make_fence_head(PrefixTruncatedKey(&v)).unwrap()
+    }
+}
+
+impl FullKeyHeadNoTag for AsciiHead {
+    const HINT_COUNT: usize = 16;
+    const MAX_LEN: usize = 9;
+
+    fn make_fence_head(key: PrefixTruncatedKey) -> Option<Self> {
+        if key.len() > 9 {
+            return None;
+        }
+        let mut out: u64 = 0;
+        for i in 0..9 {
+            out <<= 7;
+            if i < key.0.len() {
+                // 0x7f is invalid because we shift one up to allow 0x00
+                if key.0[i] >= 0x7f {
+                    return None;
+                }
+                out += key[i] as u64 + 1;
+            }
+        }
+        out <<= 1;
+        Some(AsciiHead(out))
+    }
+
+    fn make_needle_head(key: PrefixTruncatedKey) -> Self {
+        let mut out: u64 = 0;
+        let mut ceil = false;
+        for i in 0..9 {
+            out <<= 7;
+            if i < key.0.len() {
+                // 0x7f is invalid because we shift one up to allow 0x00
+                if key.0[i] >= 0x7f {
+                    ceil = true
+                }
+                if !ceil {
+                    debug_assert!(key.0[i] < 127);
+                    out += key.0[i] as u64 + 1;
+                }
+            }
+            if ceil {
+                out += 127;
+            }
+        }
+        out <<= 1;
+        if ceil || key.0.len() > 9 {
+            out += 1;
+        }
+        AsciiHead(out)
+    }
+
+    fn restore(self) -> SmallVec<[u8; 16]> {
+        let mut v = SmallVec::new();
+        let mut x = self.0;
+        debug_assert!(x % 2 == 0);
+        x >>= 1;
+        for _ in 0..9 {
+            let byte = (x & 127) as u8;
+            if byte == 0 {
+                break;
+            }
+            v.push(byte - 1);
+        }
+        v.reverse();
+        v
+    }
+}
+
+impl FullKeyHead for AsciiHead {
+    const TAG: BTreeNodeTag = BTreeNodeTag::U64HeadNode;
 }
 
 impl<T: UnsignedInt> FullKeyHeadNoTag for T {
