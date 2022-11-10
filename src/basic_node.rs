@@ -1,7 +1,7 @@
 use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::find_separator::find_separator;
-use crate::head_node::{U32HeadNode, U64HeadNode};
-use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
     short_slice, SmallBuff, trailing_bytes,

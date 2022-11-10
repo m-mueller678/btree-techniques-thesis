@@ -1,16 +1,19 @@
 #![feature(is_sorted)]
 
-use btree::b_tree::BTree;
-use btree::{ensure_init, PrefixTruncatedKey};
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+
+use btree::{PrefixTruncatedKey};
+
+
+use std::hint::black_box;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
-use rand::{Rng, SeedableRng};
+
+use std::time::{Duration, Instant};
+use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
-use btree::head_node::{FullKeyHead, FullKeyHeadNoTag};
-use btree::node_stats::{btree_to_inner_node_stats, NodeData};
+use btree::head_node::{FullKeyHead};
+
 
 fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     let mut buffer = [0u8; 1 << 9];
@@ -39,7 +42,7 @@ fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     );
     let mut last_fence = None;
     let mut max_key = [].as_slice();
-    for &(k, h, f) in &keys {
+    for &(k, _h, f) in &keys {
         if let Some(last_fence) = last_fence {
             if f && last_fence == k {
                 continue;
@@ -68,16 +71,43 @@ fn test_thread(id: usize) {
             test_head::<u64>(&mut rng, 9);
         }
         let c = COUNTER.fetch_add(iterations, Ordering::Relaxed);
-        let DISPLAY_DIV = 100_000;
+        const DISPLAY_DIV: usize = 100_000;
         if c / DISPLAY_DIV != (c + iterations) / DISPLAY_DIV {
             eprintln!("{}", (c + iterations) / DISPLAY_DIV);
         }
     }
 }
 
-fn main() {
-    for i in 0..35 {
-        std::thread::spawn(move || test_thread(i));
+fn perf<H: FullKeyHead>() {
+    let mut rng = Xoshiro128PlusPlus::seed_from_u64(0x33445566778899aa);
+    let mut buffer = vec![0u8; 1 << 16];
+    let mut lens = Vec::new();
+    let mut count_acc = 0;
+    let mut duration_acc = Duration::ZERO;
+    for _ in 0..500 {
+        rng.fill_bytes(&mut buffer);
+        lens.clear();
+        let mut total_len = 0;
+        loop {
+            let l = rng.gen_range(0..20);
+            total_len += l;
+            if total_len > buffer.len() { break; }
+            lens.push(total_len);
+        }
+        let start = Instant::now();
+        for _ in 0..1000 {
+            for range in lens.windows(2) {
+                let key = &buffer[range[0]..range[1]];
+                black_box(H::make_needle_head(PrefixTruncatedKey(key)));
+            }
+        }
+        duration_acc += start.elapsed();
+        count_acc += (lens.len() - 1) * 1000;
     }
-    test_thread(36);
+    println!("{},{},{}", duration_acc.as_nanos() as f64 / count_acc as f64, cfg!(feature = "use-full-length_true"), std::any::type_name::<H>())
+}
+
+fn main() {
+    perf::<u32>();
+    perf::<u64>();
 }

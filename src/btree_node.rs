@@ -2,7 +2,7 @@ use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
-use crate::{FatTruncatedKey, PrefixTruncatedKey};
+use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
@@ -120,15 +120,15 @@ impl BTreeNode {
                 self.child
             }
 
-            fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+            fn get_key(&self, _index: usize, _dst: &mut [u8], _strip_prefix: usize) -> Result<usize, ()> {
                 panic!()
             }
 
-            fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+            fn get_key_length_sum(&self, _range: Range<usize>) -> usize {
                 0
             }
 
-            fn get_key_length_max(&self, range: Range<usize>) -> usize {
+            fn get_key_length_max(&self, _range: Range<usize>) -> usize {
                 0
             }
         }

@@ -1,5 +1,6 @@
 use std::collections::btree_set::BTreeSet;
 use std::mem::size_of;
+use std::ops::Range;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
@@ -50,6 +51,14 @@ fn random_source(rng: &mut impl Rng, count: usize, max_key_len: usize) -> impl I
         fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
             assert!(index < self.keys.len() - 2);
             get_key_from_slice(PrefixTruncatedKey(self.keys[index + 1].as_slice()), dst, strip_prefix)
+        }
+
+        fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+            unimplemented!()
+        }
+
+        fn get_key_length_max(&self, range: Range<usize>) -> usize {
+            unimplemented!()
         }
     }
 
