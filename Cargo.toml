@@ -33,12 +33,9 @@ debug = true
 incremental = true
 
 [features]
-default = ["use-full-length_false", "head-early-abort-create_false", "inner_all"]
-use-full-length_true = []
-use-full-length_false = []
-head-early-abort-create_true = []
+default = ["head-early-abort-create_false", "inner_padded"]
 head-early-abort-create_false = []
-inner_all = []
+inner_padded = []
 inner_basic = []
-inner_u32 = []
-inner_u64 = []
+inner_explicit_length = []
+inner_ascii = []

@@ -7,7 +7,7 @@ use crate::basic_node::BasicNode;
 use crate::BTreeNode;
 use std::ptr::DynMetadata;
 use crate::hash_leaf::HashLeaf;
-use crate::head_node::{AsciiHead, AsciiHeadNode, U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
+use crate::head_node::{AsciiHeadNode, U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 
 static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerNode>>; 6] = [MaybeUninit::uninit(); 6];
 static mut LEAF_VTABLES: [MaybeUninit<DynMetadata<dyn LeafNode>>; 2] = [MaybeUninit::uninit(); 2];

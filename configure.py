@@ -7,7 +7,7 @@ CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
-    "head-early-abort-create": ["true"],
+    "head-early-abort-create": ["false"],
     "inner": ["padded", "basic", "explicit_length", "ascii"],
     # "inner": ["u64"],
 }

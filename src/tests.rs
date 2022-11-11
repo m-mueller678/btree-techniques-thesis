@@ -6,7 +6,7 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource};
 use crate::{BTreeNode, ensure_init, PAGE_SIZE, PrefixTruncatedKey};
 use crate::basic_node::BasicNode;
-use crate::head_node::{U32HeadNode, U64HeadNode};
+use crate::head_node::{U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 use crate::util::get_key_from_slice;
 
 fn assert_node_eq(a: &(impl InnerConversionSource + ?Sized), b: &(impl InnerConversionSource + ?Sized)) {
@@ -108,7 +108,9 @@ fn test_node_conversions() {
         let rng = Xoshiro256PlusPlus::from_rng(&mut rng).unwrap();
         test_conversion_traits::<BasicNode>(rng.clone(), 4);
         test_conversion_traits::<BasicNode>(rng.clone(), 100);
-        test_conversion_traits::<U32HeadNode>(rng.clone(), 3);
-        test_conversion_traits::<U64HeadNode>(rng.clone(), 7);
+        test_conversion_traits::<U32ExplicitHeadNode>(rng.clone(), 3);
+        test_conversion_traits::<U64ExplicitHeadNode>(rng.clone(), 7);
+        test_conversion_traits::<U32ZeroPaddedHeadNode>(rng.clone(), 4);
+        test_conversion_traits::<U64ZeroPaddedHeadNode>(rng.clone(), 8);
     }
 }

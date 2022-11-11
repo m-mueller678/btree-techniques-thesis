@@ -1,23 +1,24 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
+use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
 use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
-use crate::head_node::{AsciiHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
+use crate::head_node;
 use crate::vtables::BTreeNodeTag;
 
 #[cfg(feature = "inner_basic")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+pub type DefaultInnerNodeConversionSink = BasicNode;
 #[cfg(feature = "inner_padded")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<head_node::U32ZeroPaddedHeadNode, head_node::U64ZeroPaddedHeadNode>, BasicNode>;
 #[cfg(feature = "inner_explicit_length")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<head_node::U32ExplicitHeadNode, head_node::U64ExplicitHeadNode>, BasicNode>;
 #[cfg(feature = "inner_ascii")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<AsciiHeadNode, BasicNode>;
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<head_node::AsciiHeadNode, BasicNode>;
+
 
 pub const PAGE_SIZE: usize = 4096;
 
