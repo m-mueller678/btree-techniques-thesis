@@ -14,8 +14,11 @@ use std::ops::Range;
 use bytemuck::{bytes_of, bytes_of_mut, Pod};
 use crate::vtables::BTreeNodeTag;
 
-pub type U64HeadNode = HeadNode<ExplicitLengthHead<u64>>;
-pub type U32HeadNode = HeadNode<ExplicitLengthHead<u32>>;
+pub type U64ExplicitHeadNode = HeadNode<ExplicitLengthHead<u64>>;
+pub type U32ExplicitHeadNode = HeadNode<ExplicitLengthHead<u32>>;
+pub type U64ZeroPaddedHeadNode = HeadNode<ZeroPaddedHead<u64>>;
+pub type U32ZeroPaddedHeadNode = HeadNode<ZeroPaddedHead<u32>>;
+pub type AsciiHeadNode = HeadNode<AsciiHead>;
 
 #[cfg(feature = "head-early-abort-create_true")]
 const HEAD_EARLY_ABORT_CREATE: bool = true;
@@ -290,24 +293,24 @@ impl<T: UnsignedInt> KeyRef<'static> for ZeroPaddedHead<T> {
 }
 
 impl FullKeyHead for ExplicitLengthHead<u64> {
-    const TAG: BTreeNodeTag = BTreeNodeTag::U64HeadNode;
+    const TAG: BTreeNodeTag = BTreeNodeTag::U64ExplicitHead;
 }
 
 impl FullKeyHead for ExplicitLengthHead<u32> {
-    const TAG: BTreeNodeTag = BTreeNodeTag::U32HeadNode;
+    const TAG: BTreeNodeTag = BTreeNodeTag::U32ExplicitHead;
 }
 
 impl FullKeyHead for ZeroPaddedHead<u64> {
-    const TAG: BTreeNodeTag = unimplemented!();
+    const TAG: BTreeNodeTag = BTreeNodeTag::U64ZeroPaddedHead;
 }
 
 impl FullKeyHead for ZeroPaddedHead<u32> {
-    const TAG: BTreeNodeTag = unimplemented!();
+    const TAG: BTreeNodeTag = BTreeNodeTag::U32ZeroPaddedHead;
 }
 
 
 impl FullKeyHead for AsciiHead {
-    const TAG: BTreeNodeTag = unimplemented!();
+    const TAG: BTreeNodeTag = BTreeNodeTag::AsciiHead;
 }
 
 
@@ -441,18 +444,6 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         size_of::<HeadNodeHead>().next_multiple_of(key_align)
     };
 
-    pub fn find_child_for_key(&self, key: &[u8]) -> usize {
-        if self.head.key_count == 0 {
-            return 0;
-        }
-        let needle_head =
-            Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
-        let (lower, upper) = self.search_hint(needle_head);
-        match self.as_parts().1[lower..upper].binary_search(&needle_head) {
-            Ok(i) | Err(i) => lower + i,
-        }
-    }
-
     fn as_parts_mut(
         &mut self,
     ) -> (
@@ -509,45 +500,8 @@ impl<Head: FullKeyHead> HeadNode<Head> {
         transmute(self as *mut Self)
     }
 
-    pub fn split_node(
-        &mut self,
-        parent: &mut dyn InnerNode,
-        index_in_parent: usize,
-        key_in_node: &[u8],
-    ) -> Result<(), ()> {
-        split_in_place::<Self, Self, Self>(
-            unsafe { reinterpret_mut(self) },
-            parent,
-            index_in_parent,
-            key_in_node,
-        )
-    }
-
     pub fn prefix<'a>(&self, src: &'a [u8]) -> &'a [u8] {
         &src[..self.head.prefix_len as usize]
-    }
-
-    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(
-            self.fences().lower_fence.0,
-            &lower[self.head.prefix_len as usize..]
-        );
-        debug_assert_eq!(
-            self.fences().upper_fence.0,
-            &upper[self.head.prefix_len as usize..]
-        );
-        let mut current_lower: SmallBuff = lower.into();
-        let (head, keys, children, _) = self.as_parts();
-        for i in 0..head.key_count as usize {
-            let current_upper = partial_restore(0, &[self.prefix(lower), &keys[i].restore()], 0);
-            unsafe { &mut *children[i] }.validate_tree(&current_lower, &current_upper);
-            current_lower = current_upper;
-        }
-        unsafe { &mut *children[head.key_count as usize] }.validate_tree(&current_lower, upper);
     }
 
     unsafe fn try_insert_to_basic(
@@ -669,11 +623,24 @@ impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
 }
 
 unsafe impl<Head: FullKeyHead> Node for HeadNode<Head> {
+    fn split_node(
+        &mut self,
+        parent: &mut dyn InnerNode,
+        index_in_parent: usize,
+        key_in_node: &[u8],
+    ) -> Result<(), ()> {
+        split_in_place::<Self, Self, Self>(
+            unsafe { reinterpret_mut(self) },
+            parent,
+            index_in_parent,
+            key_in_node,
+        )
+    }
+
     fn is_underfull(&self) -> bool {
         self.head.key_count * 4 <= self.head.key_capacity
     }
 
-    #[cfg(debug_assertions)]
     fn print(&self) {
         eprintln!("{:?}", self.head);
         let (head, keys, children, _) = self.as_parts();
@@ -691,6 +658,29 @@ unsafe impl<Head: FullKeyHead> Node for HeadNode<Head> {
         eprintln!("upper: {:?}", children[head.key_count as usize]);
         eprintln!("fences: {:?}", self.fences());
     }
+
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(
+            self.fences().lower_fence.0,
+            &lower[self.head.prefix_len as usize..]
+        );
+        debug_assert_eq!(
+            self.fences().upper_fence.0,
+            &upper[self.head.prefix_len as usize..]
+        );
+        let mut current_lower: SmallBuff = lower.into();
+        let (head, keys, children, _) = self.as_parts();
+        for i in 0..head.key_count as usize {
+            let current_upper = partial_restore(0, &[self.prefix(lower), &keys[i].restore()], 0);
+            unsafe { &mut *children[i] }.validate_tree(&current_lower, &current_upper);
+            current_lower = current_upper;
+        }
+        unsafe { &mut *children[head.key_count as usize] }.validate_tree(&current_lower, upper);
+    }
 }
 
 impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
@@ -707,6 +697,18 @@ impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
 }
 
 impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {
+    fn find_child_index(&self, key: &[u8]) -> usize {
+        if self.head.key_count == 0 {
+            return 0;
+        }
+        let needle_head =
+            Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
+        let (lower, upper) = self.search_hint(needle_head);
+        match self.as_parts().1[lower..upper].binary_search(&needle_head) {
+            Ok(i) | Err(i) => lower + i,
+        }
+    }
+
     fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {
         debug_assert!(child_index < self.head.key_count as usize + 1);
         debug_assert!(unsafe { (&*self.get_child(child_index)).is_underfull() });

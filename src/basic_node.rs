@@ -1,7 +1,7 @@
 use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
     short_slice, SmallBuff, trailing_bytes,
@@ -206,20 +206,6 @@ impl BasicNode {
         }
     }
 
-    pub fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
-        self.request_space(self.space_needed(key.len(), payload.len()))?;
-        let key = self.truncate(key);
-        let (slot_id, found) = self.lower_bound(key);
-        if found {
-            let s = &self.slots()[slot_id];
-            self.head.space_used -= s.key_len + s.val_len;
-            self.store_key_value(slot_id, key, payload);
-        } else {
-            self.raw_insert(slot_id, key, payload);
-        }
-        Ok(())
-    }
-
     pub fn raw_insert(&mut self, slot_id: usize, key: PrefixTruncatedKey, payload: &[u8]) {
         debug_assert!(slot_id == 0 || self.slots()[slot_id - 1].key(self.as_bytes()) < key);
         debug_assert!(
@@ -413,76 +399,6 @@ impl BasicNode {
         key_length + payload_length + size_of::<BasicSlot>() - self.head.prefix_len as usize
     }
 
-    pub fn split_node(
-        &mut self,
-        parent: &mut dyn InnerNode,
-        index_in_parent: usize,
-        key_in_node: &[u8],
-    ) -> Result<(), ()> {
-        if self.head.tag.is_inner() {
-            type Dst = crate::btree_node::DefaultInnerNodeConversionSink;
-            return split_in_place::<BasicNode, Dst, Dst>(
-                unsafe { reinterpret_mut(self) },
-                parent,
-                index_in_parent,
-                key_in_node,
-            );
-        }
-
-        // split
-        let (sep_slot, truncated_sep_key) = self.find_separator();
-        let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
-        let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let node_left_raw;
-        let node_left = unsafe {
-            node_left_raw = BTreeNode::alloc();
-            (*node_left_raw).basic = Self::new(self.head.tag.is_leaf());
-            &mut (*node_left_raw).basic
-        };
-        let mut node_right = Self::new(self.head.tag.is_leaf());
-        let sep_buffer = partial_restore(
-            0,
-            &[self.prefix(key_in_node), truncated_sep_key.0],
-            parent_prefix_len,
-        );
-        node_left.set_fences(
-            FenceData {
-                upper_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        node_right.set_fences(
-            FenceData {
-                lower_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        let parent_sep = PrefixTruncatedKey(&sep_buffer);
-        unsafe {
-            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
-                BTreeNode::dealloc(node_left_raw);
-                return Err(());
-            }
-        }
-
-        self.copy_key_value_range(
-            &self.slots()[..=sep_slot],
-            node_left,
-            FatTruncatedKey::full(key_in_node),
-        );
-        self.copy_key_value_range(
-            &self.slots()[sep_slot + 1..],
-            &mut node_right,
-            FatTruncatedKey::full(key_in_node),
-        );
-        node_left.make_hint();
-        node_right.make_hint();
-        *self = node_right;
-        Ok(())
-    }
-
     pub fn merge_right(
         &self,
         is_inner: bool,
@@ -553,51 +469,8 @@ impl BasicNode {
         self.validate();
     }
 
-    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
-        let (slot_id, found) = self.lower_bound(self.truncate(key));
-        if !found {
-            return None;
-        }
-        self.remove_slot(slot_id);
-        Some(())
-    }
-
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
-    }
-
-    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(
-            self.fences().lower_fence,
-            if STRIP_PREFIX {
-                self.truncate(&lower)
-            } else {
-                PrefixTruncatedKey(lower)
-            }
-        );
-        debug_assert_eq!(
-            self.fences().upper_fence,
-            if STRIP_PREFIX {
-                self.truncate(&upper)
-            } else {
-                PrefixTruncatedKey(upper)
-            }
-        );
-        if self.head.tag.is_inner() {
-            let mut current_lower: SmallBuff = lower.into();
-            for (i, s) in self.slots().iter().enumerate() {
-                let current_upper =
-                    partial_restore(0, &[self.prefix(lower), s.key(self.as_bytes()).0], 0);
-                unsafe { &mut *self.get_child(i) }.validate_tree(&current_lower, &current_upper);
-                current_lower = current_upper;
-            }
-            unsafe { &mut *self.get_child(self.head.count as usize) }
-                .validate_tree(&current_lower, upper);
-        }
     }
 }
 
@@ -647,11 +520,80 @@ impl InnerConversionSource for BasicNode {
 }
 
 unsafe impl Node for BasicNode {
+    fn split_node(
+        &mut self,
+        parent: &mut dyn InnerNode,
+        index_in_parent: usize,
+        key_in_node: &[u8],
+    ) -> Result<(), ()> {
+        if self.head.tag.is_inner() {
+            type Dst = crate::btree_node::DefaultInnerNodeConversionSink;
+            return split_in_place::<BasicNode, Dst, Dst>(
+                unsafe { reinterpret_mut(self) },
+                parent,
+                index_in_parent,
+                key_in_node,
+            );
+        }
+
+        // split
+        let (sep_slot, truncated_sep_key) = self.find_separator();
+        let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
+        let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
+        let node_left_raw;
+        let node_left = unsafe {
+            node_left_raw = BTreeNode::alloc();
+            (*node_left_raw).basic = Self::new(self.head.tag.is_leaf());
+            &mut (*node_left_raw).basic
+        };
+        let mut node_right = Self::new(self.head.tag.is_leaf());
+        let sep_buffer = partial_restore(
+            0,
+            &[self.prefix(key_in_node), truncated_sep_key.0],
+            parent_prefix_len,
+        );
+        node_left.set_fences(
+            FenceData {
+                upper_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
+        node_right.set_fences(
+            FenceData {
+                lower_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
+        let parent_sep = PrefixTruncatedKey(&sep_buffer);
+        unsafe {
+            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+                BTreeNode::dealloc(node_left_raw);
+                return Err(());
+            }
+        }
+
+        self.copy_key_value_range(
+            &self.slots()[..=sep_slot],
+            node_left,
+            FatTruncatedKey::full(key_in_node),
+        );
+        self.copy_key_value_range(
+            &self.slots()[sep_slot + 1..],
+            &mut node_right,
+            FatTruncatedKey::full(key_in_node),
+        );
+        node_left.make_hint();
+        node_right.make_hint();
+        *self = node_right;
+        Ok(())
+    }
+
     fn is_underfull(&self) -> bool {
         self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
     }
 
-    #[cfg(debug_assertions)]
     fn print(&self) {
         eprintln!("{:?}", self.head);
         for (i, s) in self.slots().iter().enumerate() {
@@ -663,8 +605,41 @@ unsafe impl Node for BasicNode {
             );
         }
     }
-}
 
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(
+            self.fences().lower_fence,
+            if STRIP_PREFIX {
+                self.truncate(&lower)
+            } else {
+                PrefixTruncatedKey(lower)
+            }
+        );
+        debug_assert_eq!(
+            self.fences().upper_fence,
+            if STRIP_PREFIX {
+                self.truncate(&upper)
+            } else {
+                PrefixTruncatedKey(upper)
+            }
+        );
+        if self.head.tag.is_inner() {
+            let mut current_lower: SmallBuff = lower.into();
+            for (i, s) in self.slots().iter().enumerate() {
+                let current_upper =
+                    partial_restore(0, &[self.prefix(lower), s.key(self.as_bytes()).0], 0);
+                unsafe { &mut *self.get_child(i) }.validate_tree(&current_lower, &current_upper);
+                current_lower = current_upper;
+            }
+            unsafe { &mut *self.get_child(self.head.count as usize) }
+                .validate_tree(&current_lower, upper);
+        }
+    }
+}
 
 unsafe impl InnerConversionSink for BasicNode {
     fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
@@ -766,5 +741,43 @@ impl InnerNode for BasicNode {
     fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
         self.request_space(self.space_needed(key_length, size_of::<*mut BTreeNode>())
         )
+    }
+
+    fn find_child_index(&self, key: &[u8]) -> usize {
+        self.lower_bound(self.truncate(key)).0
+    }
+}
+
+impl LeafNode for BasicNode {
+    fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
+        self.request_space(self.space_needed(key.len(), payload.len()))?;
+        let key = self.truncate(key);
+        let (slot_id, found) = self.lower_bound(key);
+        if found {
+            let s = &self.slots()[slot_id];
+            self.head.space_used -= s.key_len + s.val_len;
+            self.store_key_value(slot_id, key, payload);
+        } else {
+            self.raw_insert(slot_id, key, payload);
+        }
+        Ok(())
+    }
+
+    fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
+        let (index, found) = self.lower_bound(self.truncate(key));
+        if found {
+            Some(self.slots()[index].value(self.as_bytes()))
+        } else {
+            None
+        }
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<()> {
+        let (slot_id, found) = self.lower_bound(self.truncate(key));
+        if !found {
+            return None;
+        }
+        self.remove_slot(slot_id);
+        Some(())
     }
 }

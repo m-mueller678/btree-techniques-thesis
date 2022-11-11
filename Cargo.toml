@@ -33,7 +33,7 @@ debug = true
 incremental = true
 
 [features]
-default = ["use-full-length_false", "head-early-abort-create_false", "inner_u64"]
+default = ["use-full-length_false", "head-early-abort-create_false", "inner_all"]
 use-full-length_true = []
 use-full-length_false = []
 head-early-abort-create_true = []

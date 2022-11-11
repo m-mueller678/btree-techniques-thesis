@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
-use btree::head_node::{AsciiHead, FullKeyHead, FullKeyHeadNoTag};
+use btree::head_node::{AsciiHead, FullKeyHead};
 
 
 fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {

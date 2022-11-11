@@ -1,25 +1,27 @@
 use std::ptr;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use crate::inner_node::{InnerNode, Node};
+use crate::inner_node::{InnerNode, LeafNode, Node};
 use std::mem::MaybeUninit;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use crate::basic_node::BasicNode;
 use crate::BTreeNode;
-use crate::head_node::{U32HeadNode, U64HeadNode};
 use std::ptr::DynMetadata;
 use crate::hash_leaf::HashLeaf;
+use crate::head_node::{AsciiHead, AsciiHeadNode, U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 
-static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerNode>>; 3] = [MaybeUninit::uninit(); 3];
-static mut NODE_VTABLES: [MaybeUninit<DynMetadata<dyn Node>>; 6] = [MaybeUninit::uninit(); 6];
+static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerNode>>; 6] = [MaybeUninit::uninit(); 6];
+static mut LEAF_VTABLES: [MaybeUninit<DynMetadata<dyn LeafNode>>; 2] = [MaybeUninit::uninit(); 2];
+static mut NODE_VTABLES: [MaybeUninit<DynMetadata<dyn Node>>; 12] = [MaybeUninit::uninit(); 12];
 
 /// must be called before BTreeNode methods are used
 pub fn init_vtables() {
-    fn make_leaf_vtables<N: Node>(tag: BTreeNodeTag) {
+    fn make_leaf_vtables<N: LeafNode>(tag: BTreeNodeTag) {
         let tag: u8 = tag.into();
         let tag = tag as usize;
         assert!(tag % 2 == 0);
         let ptr: *mut N = ptr::null_mut();
         unsafe {
+            LEAF_VTABLES[tag / 2].write(ptr::metadata(ptr as *mut (dyn LeafNode)));
             NODE_VTABLES[tag].write(ptr::metadata(ptr as *mut dyn Node));
         }
     }
@@ -36,9 +38,13 @@ pub fn init_vtables() {
     }
     make_leaf_vtables::<BasicNode>(BTreeNodeTag::BasicLeaf);
     make_leaf_vtables::<HashLeaf>(BTreeNodeTag::HashLeaf);
+
     make_inner_vtables::<BasicNode>(BTreeNodeTag::BasicInner);
-    make_inner_vtables::<U64HeadNode>(BTreeNodeTag::U64HeadNode);
-    make_inner_vtables::<U32HeadNode>(BTreeNodeTag::U32HeadNode);
+    make_inner_vtables::<U32ExplicitHeadNode>(BTreeNodeTag::U32ExplicitHead);
+    make_inner_vtables::<U64ExplicitHeadNode>(BTreeNodeTag::U64ExplicitHead);
+    make_inner_vtables::<U32ZeroPaddedHeadNode>(BTreeNodeTag::U32ZeroPaddedHead);
+    make_inner_vtables::<U64ZeroPaddedHeadNode>(BTreeNodeTag::U64ZeroPaddedHead);
+    make_inner_vtables::<AsciiHeadNode>(BTreeNodeTag::AsciiHead);
 }
 
 #[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -47,8 +53,11 @@ pub enum BTreeNodeTag {
     BasicLeaf = 0,
     BasicInner = 1,
     HashLeaf = 2,
-    U64HeadNode = 3,
-    U32HeadNode = 5,
+    U64ExplicitHead = 3,
+    U32ExplicitHead = 5,
+    U64ZeroPaddedHead = 7,
+    U32ZeroPaddedHead = 9,
+    AsciiHead = 11,
 }
 
 impl BTreeNodeTag {
@@ -75,6 +84,16 @@ impl Deref for BTreeNode {
     }
 }
 
+impl DerefMut for BTreeNode {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            &mut *ptr::from_raw_parts_mut(
+                self as *mut Self as *mut (),
+                NODE_VTABLES[self.tag() as usize].assume_init(),
+            )
+        }
+    }
+}
 
 impl BTreeNode {
     pub fn to_inner(&self) -> &dyn InnerNode {
@@ -92,6 +111,28 @@ impl BTreeNode {
         unsafe {
             debug_assert!(self.tag().is_inner());
             let vtable = INNER_VTABLES[self.tag() as usize / 2].assume_init();
+            &mut *ptr::from_raw_parts_mut(
+                self as *mut Self as *mut (),
+                vtable,
+            )
+        }
+    }
+
+    pub fn to_leaf(&self) -> &dyn LeafNode {
+        unsafe {
+            debug_assert!(self.tag().is_leaf());
+            let vtable = LEAF_VTABLES[self.tag() as usize / 2].assume_init();
+            &*ptr::from_raw_parts(
+                self as *const Self as *const (),
+                vtable,
+            )
+        }
+    }
+
+    pub fn to_leaf_mut(&mut self) -> &mut dyn LeafNode {
+        unsafe {
+            debug_assert!(self.tag().is_leaf());
+            let vtable = LEAF_VTABLES[self.tag() as usize / 2].assume_init();
             &mut *ptr::from_raw_parts_mut(
                 self as *mut Self as *mut (),
                 vtable,

@@ -1,5 +1,5 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, InnerNode, Node};
+use crate::inner_node::{FenceData, InnerNode, LeafNode, Node};
 use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use rustc_hash::FxHasher;
@@ -204,13 +204,6 @@ impl HashLeaf {
         self.hashes_mut()[slot_id] = Self::compute_hash(prefix_truncated_key);
     }
 
-    pub fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
-        // self.print();
-        //eprintln!("{:?} insert {:?}",self as *const Self,key);
-        let key = self.truncate(key);
-        self.insert_truncated(key, payload)
-    }
-
     fn insert_truncated(&mut self, key: PrefixTruncatedKey, payload: &[u8]) -> Result<(), ()> {
         let index = if let Some(found) = self.find_index(key) {
             let s = &mut self.slots_mut()[found];
@@ -302,85 +295,6 @@ impl HashLeaf {
         &key_in_node[..self.head.prefix_len as usize]
     }
 
-    pub fn split_node(
-        &mut self,
-        parent: &mut dyn InnerNode,
-        index_in_parent: usize,
-        key_in_self: &[u8],
-    ) -> Result<(), ()> {
-        {
-            //sort
-            let this = self as *mut Self as *mut u8;
-            let count = self.head.count as usize;
-            unsafe {
-                let slots = std::slice::from_raw_parts_mut(
-                    this.offset(Self::layout(count).slots_start as isize) as *mut HashSlot,
-                    count,
-                );
-                slots.sort_by_key(|s| {
-                    std::slice::from_raw_parts(this.offset(s.offset as isize), s.key_len as usize)
-                });
-            };
-        }
-
-        // self.print();
-
-        // split
-        let (sep_slot, truncated_sep_key) =
-            find_separator(self.head.count as usize, true, |i: usize| {
-                self.slots()[i].key(self.as_bytes())
-            });
-        let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
-        let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
-        let node_left_raw;
-        let node_left = unsafe {
-            node_left_raw = BTreeNode::alloc();
-            (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
-            &mut (*node_left_raw).hash_leaf
-        };
-        node_left.set_fences(
-            FenceData {
-                upper_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        let mut node_right = Self::new();
-        node_right.set_fences(
-            FenceData {
-                lower_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        let parent_sep = partial_restore(
-            0,
-            &[self.prefix(key_in_self), truncated_sep_key.0],
-            parent_prefix_len,
-        );
-        let parent_sep = PrefixTruncatedKey(&parent_sep);
-        unsafe {
-            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
-                BTreeNode::dealloc(node_left_raw);
-                return Err(());
-            }
-        }
-        if self.head.tag.is_leaf() {
-            self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
-            self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
-        }
-        node_left.validate();
-        node_right.validate();
-        // node_left.print();
-        // node_right.print();
-        debug_assert_eq!(
-            self.head.count,
-            node_left.head.count + node_right.head.count
-        );
-        *self = node_right;
-        Ok(())
-    }
-
     pub fn fences(&self) -> FenceData {
         FenceData {
             lower_fence: PrefixTruncatedKey(short_slice(
@@ -411,11 +325,6 @@ impl HashLeaf {
             },
             data: [0u8; PAGE_SIZE - size_of::<HashLeafHead>()],
         }
-    }
-
-    pub fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
-        self.find_index(self.truncate(key))
-            .map(|i| self.slots()[i].value(self.as_bytes()))
     }
 
     fn find_index(&self, key: PrefixTruncatedKey) -> Option<usize> {
@@ -515,37 +424,6 @@ impl HashLeaf {
         );
     }
 
-    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
-        //eprintln!("### {:?} remove {:?}",self as *const Self,key);
-        // self.print();
-
-        let index = self.find_index(self.truncate(key))?;
-        let new_count = self.head.count as usize - 1;
-        let last = new_count;
-        let slot = self.slots()[index];
-        self.head.space_used -= slot.key_len + slot.val_len;
-        if index < last {
-            let slots = self.slots_mut();
-            slots[index] = slots[last];
-            let hashes = self.hashes_mut();
-            hashes[index] = hashes[last];
-        }
-        assert!(SLOTS_FIRST);
-        let old_layout = Self::layout(new_count + 1);
-        let new_layout = Self::layout(new_count);
-        unsafe {
-            self.as_bytes_mut().copy_within(
-                old_layout.hash_start..old_layout.hash_start + new_count,
-                new_layout.hash_start,
-            );
-        }
-        debug_assert_eq!(old_layout.slots_start, new_layout.slots_start);
-        self.head.count -= 1;
-        self.validate();
-        // self.print();
-        Some(())
-    }
-
     pub fn try_merge_right(
         &self,
         right: &mut Self,
@@ -589,23 +467,92 @@ impl HashLeaf {
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
     }
-
-    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
-        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
-    }
 }
 
 unsafe impl Node for HashLeaf {
+    fn split_node(
+        &mut self,
+        parent: &mut dyn InnerNode,
+        index_in_parent: usize,
+        key_in_self: &[u8],
+    ) -> Result<(), ()> {
+        {
+            //sort
+            let this = self as *mut Self as *mut u8;
+            let count = self.head.count as usize;
+            unsafe {
+                let slots = std::slice::from_raw_parts_mut(
+                    this.offset(Self::layout(count).slots_start as isize) as *mut HashSlot,
+                    count,
+                );
+                slots.sort_by_key(|s| {
+                    std::slice::from_raw_parts(this.offset(s.offset as isize), s.key_len as usize)
+                });
+            };
+        }
+
+        // self.print();
+
+        // split
+        let (sep_slot, truncated_sep_key) =
+            find_separator(self.head.count as usize, true, |i: usize| {
+                self.slots()[i].key(self.as_bytes())
+            });
+        let full_sep_key_len = truncated_sep_key.0.len() + self.head.prefix_len as usize;
+        let parent_prefix_len = parent.request_space_for_child(full_sep_key_len)?;
+        let node_left_raw;
+        let node_left = unsafe {
+            node_left_raw = BTreeNode::alloc();
+            (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
+            &mut (*node_left_raw).hash_leaf
+        };
+        node_left.set_fences(
+            FenceData {
+                upper_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
+        let mut node_right = Self::new();
+        node_right.set_fences(
+            FenceData {
+                lower_fence: truncated_sep_key,
+                ..self.fences()
+            }
+                .restrip(),
+        );
+        let parent_sep = partial_restore(
+            0,
+            &[self.prefix(key_in_self), truncated_sep_key.0],
+            parent_prefix_len,
+        );
+        let parent_sep = PrefixTruncatedKey(&parent_sep);
+        unsafe {
+            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+                BTreeNode::dealloc(node_left_raw);
+                return Err(());
+            }
+        }
+        if self.head.tag.is_leaf() {
+            self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
+            self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
+        }
+        node_left.validate();
+        node_right.validate();
+        // node_left.print();
+        // node_right.print();
+        debug_assert_eq!(
+            self.head.count,
+            node_left.head.count + node_right.head.count
+        );
+        *self = node_right;
+        Ok(())
+    }
+
     fn is_underfull(&self) -> bool {
         self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
     }
 
-    #[cfg(debug_assertions)]
     fn print(&self) {
         eprintln!("HashLeaf {:?}: {:?}", self as *const Self, self.fences());
         for (i, s) in self.slots().iter().enumerate() {
@@ -616,5 +563,58 @@ unsafe impl Node for HashLeaf {
                 s.key(self.as_bytes())
             );
         }
+    }
+
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(
+            self.head.prefix_len as usize,
+            common_prefix_len(lower, upper)
+        );
+        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
+        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
+    }
+}
+
+impl LeafNode for HashLeaf {
+    fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
+        // self.print();
+        //eprintln!("{:?} insert {:?}",self as *const Self,key);
+        let key = self.truncate(key);
+        self.insert_truncated(key, payload)
+    }
+    fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
+        self.find_index(self.truncate(key))
+            .map(|i| self.slots()[i].value(self.as_bytes()))
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<()> {
+        //eprintln!("### {:?} remove {:?}",self as *const Self,key);
+        // self.print();
+
+        let index = self.find_index(self.truncate(key))?;
+        let new_count = self.head.count as usize - 1;
+        let last = new_count;
+        let slot = self.slots()[index];
+        self.head.space_used -= slot.key_len + slot.val_len;
+        if index < last {
+            let slots = self.slots_mut();
+            slots[index] = slots[last];
+            let hashes = self.hashes_mut();
+            hashes[index] = hashes[last];
+        }
+        assert!(SLOTS_FIRST);
+        let old_layout = Self::layout(new_count + 1);
+        let new_layout = Self::layout(new_count);
+        unsafe {
+            self.as_bytes_mut().copy_within(
+                old_layout.hash_start..old_layout.hash_start + new_count,
+                new_layout.hash_start,
+            );
+        }
+        debug_assert_eq!(old_layout.slots_start, new_layout.slots_start);
+        self.head.count -= 1;
+        self.validate();
+        // self.print();
+        Some(())
     }
 }

@@ -19,29 +19,11 @@ impl BTree {
         unsafe {
             let (node, parent, pos) = (&mut *self.root).descend(key, |_| false);
             let node = &mut *node;
-            match node.tag() {
-                BTreeNodeTag::BasicInner => unreachable!(),
-                BTreeNodeTag::U64HeadNode => unreachable!(),
-                BTreeNodeTag::U32HeadNode => unreachable!(),
-                BTreeNodeTag::BasicLeaf => {
-                    if node.basic.insert(key, payload).is_ok() {
-                        //self.validate();
-                        return;
-                    }
-                    // node is full: split and restart
-                    self.split_node(node, parent, key, pos);
-                    self.insert(key, payload);
-                }
-                BTreeNodeTag::HashLeaf => {
-                    if node.hash_leaf.insert(key, payload).is_ok() {
-                        //self.validate();
-                        return;
-                    }
-                    // node is full: split and restart
-                    self.split_node(node, parent, key, pos);
-                    self.insert(key, payload);
-                }
+            if node.to_leaf_mut().insert(key, payload).is_ok() {
+                return;
             }
+            self.split_node(node, parent, key, pos);
+            self.insert(key, payload);
         }
     }
 
@@ -50,29 +32,11 @@ impl BTree {
         tracing::info!("lookup {key:?}");
         let (node, _, _) = (*self.root).descend(key, |_| false);
         let node = &*node;
-        match node.tag() {
-            BTreeNodeTag::BasicInner => unreachable!(),
-            BTreeNodeTag::U64HeadNode => unreachable!(),
-            BTreeNodeTag::U32HeadNode => unreachable!(),
-            BTreeNodeTag::BasicLeaf => {
-                let node = &node.basic;
-                let (index, found) = node.lower_bound(node.truncate(key));
-                if found {
-                    let slice = node.slots()[index].value(node.as_bytes());
-                    ptr::write(payload_len_out, slice.len() as u64);
-                    slice.as_ptr()
-                } else {
-                    ptr::null()
-                }
-            }
-            BTreeNodeTag::HashLeaf => {
-                if let Some(val) = node.hash_leaf.lookup(key) {
-                    *payload_len_out = val.len() as u64;
-                    val.as_ptr()
-                } else {
-                    ptr::null()
-                }
-            }
+        if let Some(data) = node.to_leaf().lookup(key) {
+            ptr::write(payload_len_out, data.len() as u64);
+            data.as_ptr()
+        } else {
+            ptr::null()
         }
     }
 
@@ -88,26 +52,7 @@ impl BTree {
             parent = BTreeNode::new_inner(node);
             self.root = parent;
         }
-        let success = match (*node).tag() {
-            BTreeNodeTag::BasicLeaf | BTreeNodeTag::BasicInner => {
-                (*node).basic.split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
-            }
-            BTreeNodeTag::HashLeaf => {
-                (&mut *node)
-                    .hash_leaf
-                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
-            }
-            BTreeNodeTag::U64HeadNode => {
-                (&mut *node)
-                    .u64_head_node
-                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
-            }
-            BTreeNodeTag::U32HeadNode => {
-                (&mut *node)
-                    .u32_head_node
-                    .split_node((&mut *parent).to_inner_mut(), index_in_parent, key)
-            }
-        };
+        let success = (*node).split_node((&mut *parent).to_inner_mut(), index_in_parent, key);
         self.validate();
         if success.is_err() {
             self.ensure_space(parent, key);
@@ -144,7 +89,7 @@ impl BTree {
         loop {
             let (node, parent, index) = (&mut *self.root).descend(key, |n| n == merge_target);
             if merge_target.is_null() {
-                let not_found = (*node).remove(key).is_none();
+                let not_found = (&mut *node).to_leaf_mut().remove(key).is_none();
                 self.validate();
                 if not_found {
                     return false; // todo validate

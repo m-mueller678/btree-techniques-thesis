@@ -1,6 +1,5 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::head_node::{U32HeadNode, U64HeadNode};
 use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right, Node};
 use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
@@ -8,20 +7,17 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
-
-#[cfg(feature = "inner_all")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32HeadNode, U64HeadNode>, BasicNode>;
+use crate::head_node::{AsciiHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
+use crate::vtables::BTreeNodeTag;
 
 #[cfg(feature = "inner_basic")]
-pub type DefaultInnerNodeConversionSink = BasicNode;
-
-#[cfg(feature = "inner_u32")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<U32HeadNode, BasicNode>;
-
-#[cfg(feature = "inner_u64")]
-pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<U64HeadNode, BasicNode>;
-
-use crate::vtables::BTreeNodeTag;
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+#[cfg(feature = "inner_padded")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+#[cfg(feature = "inner_explicit_length")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<U32ZeroPaddedHeadNode, U64ZeroPaddedHeadNode>, BasicNode>;
+#[cfg(feature = "inner_ascii")]
+pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<AsciiHeadNode, BasicNode>;
 
 pub const PAGE_SIZE: usize = 4096;
 
@@ -30,8 +26,6 @@ pub union BTreeNode {
     pub raw_bytes: [u8; PAGE_SIZE],
     pub basic: BasicNode,
     pub hash_leaf: ManuallyDrop<HashLeaf>,
-    pub u64_head_node: ManuallyDrop<U64HeadNode>,
-    pub u32_head_node: ManuallyDrop<U32HeadNode>,
     pub uninit: (),
 }
 
@@ -60,27 +54,10 @@ impl BTreeNode {
     ) -> (*mut BTreeNode, *mut BTreeNode, usize) {
         let mut parent = ptr::null_mut();
         let mut index = 0;
-        while !filter(self) {
-            match self.tag() {
-                BTreeNodeTag::BasicLeaf => break,
-                BTreeNodeTag::BasicInner => unsafe {
-                    index = self.basic.lower_bound(self.basic.truncate(key)).0;
-                    parent = self;
-                    // eprintln!("descend {}",index);
-                    self = &mut *self.basic.get_child(index);
-                },
-                BTreeNodeTag::HashLeaf => break,
-                BTreeNodeTag::U64HeadNode => unsafe {
-                    index = self.u64_head_node.find_child_for_key(key);
-                    parent = self;
-                    self = &mut *self.u64_head_node.get_child(index);
-                },
-                BTreeNodeTag::U32HeadNode => unsafe {
-                    index = self.u32_head_node.find_child_for_key(key);
-                    parent = self;
-                    self = &mut *self.u32_head_node.get_child(index);
-                },
-            };
+        while self.tag().is_inner() && !filter(self) {
+            index = self.to_inner().find_child_index(key);
+            parent = self;
+            self = unsafe { &mut *self.to_inner().get_child(index) };
         }
         (self, parent, index)
     }
@@ -158,26 +135,6 @@ impl BTreeNode {
                 debug_assert!(rt.is_inner());
                 merge_to_right::<BasicNode>(self, right, separator)
             }
-        }
-    }
-
-    pub fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        match self.tag() {
-            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe {
-                self.basic.validate_tree(lower, upper)
-            },
-            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.validate_tree(lower, upper) },
-            BTreeNodeTag::U64HeadNode => unsafe { self.u64_head_node.validate_tree(lower, upper) },
-            BTreeNodeTag::U32HeadNode => unsafe { self.u32_head_node.validate_tree(lower, upper) },
-        }
-    }
-
-    pub fn remove(&mut self, key: &[u8]) -> Option<()> {
-        match self.tag() {
-            BTreeNodeTag::BasicInner | BTreeNodeTag::BasicLeaf => unsafe { self.basic.remove(key) },
-            BTreeNodeTag::HashLeaf => unsafe { self.hash_leaf.remove(key) },
-            BTreeNodeTag::U64HeadNode => unreachable!(),
-            BTreeNodeTag::U32HeadNode => unreachable!(),
         }
     }
 }

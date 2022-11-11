@@ -5,6 +5,7 @@ use once_cell::unsync::OnceCell;
 use std::ops::{Deref, Range};
 
 use std::ptr;
+use crate::vtables::BTreeNodeTag;
 
 
 pub trait InnerNode: InnerConversionSource + Node {
@@ -18,6 +19,8 @@ pub trait InnerNode: InnerConversionSource + Node {
     /// on success returns prefix length of node
     /// insert should be called with a string truncated to that length
     fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()>;
+
+    fn find_child_index(&self, key: &[u8]) -> usize;
 }
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {
@@ -32,19 +35,20 @@ pub trait SeparableInnerConversionSource: InnerConversionSource {
 pub unsafe trait Node: 'static {
     // true if at 1/4 capacity or less
     fn is_underfull(&self) -> bool;
-    #[cfg(debug_assertions)]
     fn print(&self);
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]);
+    fn split_node(
+        &mut self,
+        parent: &mut dyn InnerNode,
+        index_in_parent: usize,
+        key_in_node: &[u8],
+    ) -> Result<(), ()>;
 }
 
-unsafe impl Node for BTreeNode {
-    fn is_underfull(&self) -> bool {
-        self.deref().is_underfull()
-    }
-
-    #[cfg(debug_assertions)]
-    fn print(&self) {
-        self.deref().print()
-    }
+pub trait LeafNode: Node {
+    fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()>;
+    fn lookup(&self, key: &[u8]) -> Option<&[u8]>;
+    fn remove(&mut self, key: &[u8]) -> Option<()>;
 }
 
 pub trait InnerConversionSource {
