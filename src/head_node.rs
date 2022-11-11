@@ -151,15 +151,14 @@ impl FullKeyHeadNoTag for AsciiHead {
         let mut v = SmallVec::new();
         let mut x = self.0;
         debug_assert!(x % 2 == 0);
-        x >>= 1;
         for _ in 0..9 {
-            let byte = (x & 127) as u8;
+            let byte = (x >> (64 - 7) & 127) as u8;
             if byte == 0 {
                 break;
             }
             v.push(byte - 1);
+            x <<= 7;
         }
-        v.reverse();
         v
     }
 }

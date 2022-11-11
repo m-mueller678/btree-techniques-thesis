@@ -33,6 +33,7 @@ fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
         let l2 = &buffer[offset..][..lookup_size];
         let l1 = &buffer[offset + fence_size..][..lookup_size];
         if let Some(fh1) = H::make_fence_head(PrefixTruncatedKey(f1)) {
+            assert_eq!(f1, fh1.restore().as_slice());
             keys.push((f1, fh1, true));
         }
         keys.push((l1, H::make_needle_head(PrefixTruncatedKey(l1)), false));
