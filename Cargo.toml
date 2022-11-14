@@ -33,9 +33,8 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_padded"]
+default = ["head-early-abort-create_false", "inner_basic", "hash-leaf-simd_64"]
 head-early-abort-create_false = []
-inner_padded = []
 inner_basic = []
-inner_explicit_length = []
-inner_ascii = []
+hash-leaf-simd_32 = []
+hash-leaf-simd_64 = []

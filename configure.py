@@ -4,12 +4,14 @@ from datetime import datetime
 from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
+HOST = "zen4-students"
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    "inner": ["padded", "basic", "explicit_length", "ascii"],
-    # "inner": ["u64"],
+    # "inner": ["padded", "basic", "explicit_length", "ascii"],
+    "inner": ["basic"],
+    "hash-leaf-simd": ["32", "64"],
 }
 
 def configure(chosen_features, revision=None):
@@ -75,14 +77,14 @@ def build_all(cfg_set):
 
 def upload(dir):
     shutil.copyfile("run_all_cp_target.sh", f'{dir}/run_all.sh')
-    system("ssh cascade-01 rm -r cp-target")
-    assert system(f'rsync -r -E -e ssh {dir}/ cascade-01:cp-target/ ') == 0
+    system(f"ssh {HOST} rm -r cp-target")
+    assert system(f'rsync -r -E -e ssh {dir}/ {HOST}:cp-target/ ') == 0
 
 
-def run_uploaded():
-    assert system("ssh -f cascade-01 'nohup bash cp-target/run_all.sh'") == 0
+def print_uploaded():
+    print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
 dir = build_all(all_feature_combinations())
 upload(dir)
-run_uploaded()
+print_uploaded()

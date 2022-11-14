@@ -60,7 +60,12 @@ struct LayoutInfo {
 
 const SLOTS_FIRST: bool = true;
 const USE_SIMD: bool = true;
+
+#[cfg(feature = "hash-leaf-simd_32")]
 const SIMD_WIDTH: usize = 32;
+#[cfg(feature = "hash-leaf-simd_64")]
+const SIMD_WIDTH: usize = 64;
+
 const SIMD_ALIGN: usize = 64;
 
 impl HashLeaf {
