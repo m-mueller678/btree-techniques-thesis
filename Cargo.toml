@@ -34,10 +34,10 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_explicit_length", "hash-leaf-simd_32", "strip-prefix_false"]
+default = ["head-early-abort-create_false", "inner_basic", "leaf_basic", "hash-leaf-simd_32", "strip-prefix_true"]
 head-early-abort-create_false = []
-inner_explicit_length = []
+inner_basic = []
+leaf_basic = []
 hash-leaf-simd_32 = []
-hash-leaf-simd_64 = []
 strip-prefix_true = []
 strip-prefix_false = []

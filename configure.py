@@ -4,14 +4,17 @@ from datetime import datetime
 from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
-HOST = "zen4-students"
+HOST = "cascade-01"
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
     # "inner": ["padded", "basic", "explicit_length", "ascii"],
-    "inner": ["explicit_length"],
-    "hash-leaf-simd": ["32", "64"],
+    "inner": ["basic"],
+    "leaf": ["basic"],
+    # "leaf" : ["hash","basic"],
+    # "hash-leaf-simd": ["32", "64"],
+    "hash-leaf-simd": ["32"],
     "strip-prefix": ["true", "false"],
 }
 
@@ -86,7 +89,7 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-configure(default_features())
-# dir = build_all(all_feature_combinations())
-# upload(dir)
-# print_uploaded()
+# configure(default_features())
+dir = build_all(all_feature_combinations())
+upload(dir)
+print_uploaded()

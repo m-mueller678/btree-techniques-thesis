@@ -78,8 +78,13 @@ impl BTreeNode {
     pub fn new_leaf() -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
-            (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new());
-            //(*leaf).basic = BasicNode::new_leaf();
+            if cfg!(feature = "leaf_hash") {
+                (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new())
+            } else if cfg!(feature = "leaf_basic") {
+                (*leaf).basic = BasicNode::new_leaf();
+            } else {
+                panic!();
+            }
             leaf
         }
     }

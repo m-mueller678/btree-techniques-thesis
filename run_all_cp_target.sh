@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/out-$(date '+%Y-%m-%d-%H-%M-%S').csv"
+OUT="$HOME/out-new-prefix-strip-$(date '+%Y-%m-%d-%H-%M-%S').csv"
 touch $OUT
 
 cd ~/cp-target
