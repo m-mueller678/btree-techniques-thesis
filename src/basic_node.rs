@@ -1,11 +1,8 @@
 use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
-use crate::util::{
-    common_prefix_len, get_key_from_slice, head, merge_fences, partial_restore, reinterpret_mut,
-    short_slice, SmallBuff, trailing_bytes,
-};
+use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::util::{get_key_from_slice, head, MergeFences, partial_restore, reinterpret_mut, short_slice, SmallBuff, SplitFences, trailing_bytes};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
@@ -44,8 +41,6 @@ struct FenceKeySlot {
 }
 
 const HINT_COUNT: usize = 16;
-
-const STRIP_PREFIX: bool = true;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -101,10 +96,7 @@ impl BasicNode {
     }
 
     pub fn validate(&self) {
-        debug_assert!(
-            self.fences().lower_fence < self.fences().upper_fence
-                || self.fences().upper_fence.0.is_empty() && self.head.prefix_len == 0
-        );
+        self.fences().validate();
         if cfg!(debug_assertions) {
             for w in self.slots().windows(2) {
                 assert!(w[0].key(self.as_bytes()).0 <= w[1].key(self.as_bytes()).0);
@@ -314,13 +306,13 @@ impl BasicNode {
 
     pub fn set_fences(
         &mut self,
-        FenceData {
+        fences @ FenceData {
             lower_fence: lower,
             upper_fence: upper,
             prefix_len,
         }: FenceData,
     ) {
-        debug_assert!(lower < upper || upper.0.is_empty() && self.head.prefix_len == 0);
+        fences.validate();
         self.head.prefix_len = prefix_len as u16;
         self.head.lower_fence = FenceKeySlot {
             offset: self.write_data(lower.0),
@@ -440,18 +432,8 @@ impl BasicNode {
         }
         let mut tmp = BasicNode::new(self.head.tag.is_leaf());
         tmp.head.upper = right.head.upper;
-        merge_fences(
-            FatTruncatedKey {
-                remainder: self.fences().lower_fence.0,
-                prefix_len: self.head.prefix_len as usize,
-            },
-            separator,
-            FatTruncatedKey {
-                remainder: right.fences().upper_fence.0,
-                prefix_len: right.head.prefix_len as usize,
-            },
-            |f| tmp.set_fences(f),
-        );
+        let merge_fences = MergeFences::new(self.fences(), separator, right.fences());
+        tmp.set_fences(merge_fences.fences());
         debug_assert_eq!(tmp.head.prefix_len, new_prefix_len);
         self.copy_key_value_range(self.slots(), &mut tmp, separator);
         right.copy_key_value_range(right.slots(), &mut tmp, separator);
@@ -477,11 +459,11 @@ impl BasicNode {
 impl InnerConversionSource for BasicNode {
     fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(
+            lower_fence: FenceRef(
                 &self.as_bytes()[self.head.lower_fence.offset as usize..]
                     [..self.head.lower_fence.len as usize],
             ),
-            upper_fence: PrefixTruncatedKey(
+            upper_fence: FenceRef(
                 &self.as_bytes()[self.head.upper_fence.offset as usize..]
                     [..self.head.upper_fence.len as usize],
             ),
@@ -547,28 +529,12 @@ unsafe impl Node for BasicNode {
             &mut (*node_left_raw).basic
         };
         let mut node_right = Self::new(self.head.tag.is_leaf());
-        let sep_buffer = partial_restore(
-            0,
-            &[self.prefix(key_in_node), truncated_sep_key.0],
-            parent_prefix_len,
-        );
-        node_left.set_fences(
-            FenceData {
-                upper_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        node_right.set_fences(
-            FenceData {
-                lower_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        let parent_sep = PrefixTruncatedKey(&sep_buffer);
+
+        let mut split_fences = SplitFences::new(self.fences(), truncated_sep_key, parent_prefix_len, self.prefix(key_in_node));
+        node_left.set_fences(split_fences.lower());
+        node_right.set_fences(split_fences.upper());
         unsafe {
-            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+            if let Err(()) = parent.insert_child(index_in_parent, split_fences.separator(), node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);
                 return Err(());
             }
@@ -607,26 +573,11 @@ unsafe impl Node for BasicNode {
     }
 
     fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(
-            self.fences().lower_fence,
-            if STRIP_PREFIX {
-                self.truncate(&lower)
-            } else {
-                PrefixTruncatedKey(lower)
-            }
-        );
-        debug_assert_eq!(
-            self.fences().upper_fence,
-            if STRIP_PREFIX {
-                self.truncate(&upper)
-            } else {
-                PrefixTruncatedKey(upper)
-            }
-        );
+        debug_assert_eq!(self.fences(), FenceData {
+            prefix_len: 0,
+            lower_fence: FenceRef(lower),
+            upper_fence: FenceRef(upper),
+        }.restrip());
         if self.head.tag.is_inner() {
             let mut current_lower: SmallBuff = lower.into();
             for (i, s) in self.slots().iter().enumerate() {

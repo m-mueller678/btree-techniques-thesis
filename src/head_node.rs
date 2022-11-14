@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff,
 };
@@ -403,10 +403,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     }
 
     fn set_fences(&mut self, fences: FenceData) {
-        debug_assert!(
-            fences.lower_fence < fences.upper_fence
-                || fences.upper_fence.0.is_empty() && self.head.prefix_len == 0
-        );
+        fences.validate();
         self.head.prefix_len = fences.prefix_len as u16;
         let upper_fence_offset = PAGE_SIZE - fences.upper_fence.0.len();
         let lower_fence_offset = upper_fence_offset - fences.lower_fence.0.len();
@@ -584,11 +581,11 @@ unsafe impl<Head: FullKeyHead> InnerConversionSink for HeadNode<Head> {
 impl<Head: FullKeyHead> InnerConversionSource for HeadNode<Head> {
     fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(
+            lower_fence: FenceRef(
                 &self.as_bytes()
                     [self.head.lower_fence_offset as usize..self.head.upper_fence_offset as usize],
             ),
-            upper_fence: PrefixTruncatedKey(
+            upper_fence: FenceRef(
                 &self.as_bytes()[self.head.upper_fence_offset as usize..],
             ),
             prefix_len: self.head.prefix_len as usize,
@@ -660,18 +657,11 @@ unsafe impl<Head: FullKeyHead> Node for HeadNode<Head> {
     }
 
     fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(
-            self.fences().lower_fence.0,
-            &lower[self.head.prefix_len as usize..]
-        );
-        debug_assert_eq!(
-            self.fences().upper_fence.0,
-            &upper[self.head.prefix_len as usize..]
-        );
+        debug_assert_eq!(self.fences(), FenceData {
+            prefix_len: 0,
+            lower_fence: FenceRef(lower),
+            upper_fence: FenceRef(upper),
+        }.restrip());
         let mut current_lower: SmallBuff = lower.into();
         let (head, keys, children, _) = self.as_parts();
         for i in 0..head.key_count as usize {
@@ -755,14 +745,6 @@ impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {
         key: PrefixTruncatedKey,
         child: *mut BTreeNode,
     ) -> Result<(), ()> {
-        debug_assert!(
-            key <= self.fences().upper_fence
-                || self.fences().upper_fence.0.is_empty() && self.fences().prefix_len == 0
-        );
-        debug_assert!(
-            key > self.fences().lower_fence
-                || self.fences().lower_fence.0.is_empty() && self.fences().prefix_len == 0
-        );
         debug_assert!(self.head.key_count < self.head.key_capacity);
         if let Some(key) = Head::make_fence_head(key) {
             let (head, keys, children, _) = self.as_parts_mut();

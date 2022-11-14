@@ -10,8 +10,9 @@ FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
     # "inner": ["padded", "basic", "explicit_length", "ascii"],
-    "inner": ["basic"],
+    "inner": ["explicit_length"],
     "hash-leaf-simd": ["32", "64"],
+    "strip-prefix": ["true", "false"],
 }
 
 def configure(chosen_features, revision=None):
@@ -85,6 +86,7 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-dir = build_all(all_feature_combinations())
-upload(dir)
-print_uploaded()
+configure(default_features())
+# dir = build_all(all_feature_combinations())
+# upload(dir)
+# print_uploaded()

@@ -1,10 +1,10 @@
-use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, SmallBuff};
+use crate::util::{common_prefix_len, get_key_from_slice, MergeFences, partial_restore, reinterpret, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PrefixTruncatedKey};
-use once_cell::unsync::OnceCell;
 
 use std::ops::{Deref, Range};
 
 use std::ptr;
+use crate::btree_node::STRIP_PREFIX;
 
 
 pub trait InnerNode: InnerConversionSource + Node {
@@ -67,8 +67,35 @@ pub trait InnerConversionSource {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct FenceData<'a> {
     pub prefix_len: usize,
-    pub lower_fence: PrefixTruncatedKey<'a>,
-    pub upper_fence: PrefixTruncatedKey<'a>,
+    pub lower_fence: FenceRef<'a>,
+    pub upper_fence: FenceRef<'a>,
+}
+
+impl FenceData<'_> {
+    pub fn validate(&self) {
+        if cfg!(debug_assertions) {
+            assert!(self.lower_fence.0 < self.upper_fence.0 || self.upper_fence.0.is_empty() && self.prefix_len == 0);
+            if STRIP_PREFIX {
+                assert_eq!(common_prefix_len(self.lower_fence.0, self.upper_fence.0), 0)
+            } else {
+                assert_eq!(common_prefix_len(self.lower_fence.0, self.upper_fence.0), self.prefix_len)
+            }
+        }
+    }
+}
+
+/// either with or without prefix depending on configuration
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct FenceRef<'a> (pub &'a [u8]);
+
+impl<'a> FenceRef<'a> {
+    pub fn from_full(full: &'a [u8], prefix_len: usize) -> Self {
+        if STRIP_PREFIX {
+            Self(&full[prefix_len..])
+        } else {
+            Self(full)
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -79,19 +106,38 @@ pub unsafe extern "C" fn node_print(node: *const BTreeNode) {
 
 impl FenceData<'_> {
     pub fn restrip(self) -> Self {
-        let common = common_prefix_len(self.lower_fence.0, self.upper_fence.0);
-        FenceData {
-            prefix_len: self.prefix_len + common,
-            lower_fence: PrefixTruncatedKey(&self.lower_fence.0[common..]),
-            upper_fence: PrefixTruncatedKey(&self.upper_fence.0[common..]),
+        if STRIP_PREFIX {
+            let common = common_prefix_len(self.lower_fence.0, self.upper_fence.0);
+            FenceData {
+                prefix_len: self.prefix_len + common,
+                lower_fence: FenceRef(&self.lower_fence.0[common..]),
+                upper_fence: FenceRef(&self.upper_fence.0[common..]),
+            }
+        } else {
+            FenceData {
+                prefix_len: self.prefix_len + common_prefix_len(&self.lower_fence.0[self.prefix_len..], &&self.upper_fence.0[self.prefix_len..]),
+                ..self
+            }
         }
     }
 
     pub fn empty() -> Self {
         FenceData {
             prefix_len: 0,
-            lower_fence: PrefixTruncatedKey(&[]),
-            upper_fence: PrefixTruncatedKey(&[]),
+            lower_fence: FenceRef(&[]),
+            upper_fence: FenceRef(&[]),
+        }
+    }
+
+    pub fn debug_assert_contains(&self, key: &[u8]) {
+        if cfg!(debug_assertions) {
+            if STRIP_PREFIX {
+                assert!(self.lower_fence.0 < &key[self.prefix_len..]);
+                assert!(&key[self.prefix_len..] <= self.upper_fence.0 || self.upper_fence.0.is_empty() && self.prefix_len == 0);
+            } else {
+                assert!(self.lower_fence.0 < key);
+                assert!(key <= self.upper_fence.0 || self.upper_fence.0.is_empty() && self.prefix_len == 0);
+            }
         }
     }
 }
@@ -117,53 +163,12 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
         new_prefix_len: usize,
         right: &'a Right,
         separator: FatTruncatedKey<'a>,
-        fence_buffer: OnceCell<SmallBuff>,
+        fences: MergeFences<'a>,
     }
 
     impl<'a, Left: InnerConversionSource + ?Sized, Right: InnerConversionSource + ?Sized> InnerConversionSource for MergeView<'a, Left, Right> {
         fn fences(&self) -> FenceData {
-            let left = self.left_fences;
-            let right = self.right_fences;
-            debug_assert!(left.prefix_len >= self.separator.prefix_len);
-            debug_assert!(right.prefix_len >= self.separator.prefix_len);
-            if left.prefix_len == right.prefix_len {
-                FenceData {
-                    lower_fence: left.lower_fence,
-                    ..right
-                }
-            } else if left.prefix_len > right.prefix_len {
-                let lower = self.fence_buffer.get_or_init(|| {
-                    partial_restore(
-                        self.separator.prefix_len,
-                        &[
-                            &self.separator.remainder
-                                [..left.prefix_len - self.separator.prefix_len],
-                            self.left_fences.lower_fence.0,
-                        ],
-                        right.prefix_len,
-                    )
-                });
-                FenceData {
-                    lower_fence: PrefixTruncatedKey(lower.as_slice()),
-                    ..right
-                }
-            } else {
-                let upper = self.fence_buffer.get_or_init(|| {
-                    partial_restore(
-                        self.separator.prefix_len,
-                        &[
-                            &self.separator.remainder
-                                [..right.prefix_len - self.separator.prefix_len],
-                            self.right_fences.upper_fence.0,
-                        ],
-                        left.prefix_len,
-                    )
-                });
-                FenceData {
-                    upper_fence: PrefixTruncatedKey(upper.as_slice()),
-                    ..left
-                }
-            }
+            self.fences.fences()
         }
 
         fn key_count(&self) -> usize {
@@ -246,8 +251,8 @@ pub fn merge<Dst: InnerConversionSink, Left: InnerConversionSource + ?Sized, Rig
         right_fences,
         new_prefix_len,
         right,
-        fence_buffer: Default::default(),
         separator,
+        fences: MergeFences::new(left_fences, separator, right_fences),
     };
     Dst::create(dst, &merge_src)
 }
@@ -265,16 +270,19 @@ pub fn merge_to_right<Dst: InnerConversionSink>
 }
 
 pub fn split_at<
+    'a,
     Src: InnerConversionSource,
     Left: InnerConversionSink,
     Right: InnerConversionSink,
 >(
-    src: &Src,
+    src: &'a Src,
     left: &mut BTreeNode,
     right: &mut BTreeNode,
     split_index: usize,
-    separator: PrefixTruncatedKey,
-) -> Result<(), ()> {
+    separator: PrefixTruncatedKey<'a>,
+    prefix_src: &'a [u8],
+    parent_prefix_len: usize,
+) -> Result<SplitFences<'a>, ()> {
     struct SliceView<'a, S> {
         offset: usize,
         len: usize,
@@ -315,12 +323,9 @@ pub fn split_at<
         }
     }
 
-    let fences = src.fences();
-    let left_fences = FenceData {
-        upper_fence: separator,
-        ..fences
-    }
-        .restrip();
+    let src_fences = src.fences();
+    let mut split_fences = SplitFences::new(src_fences, separator, parent_prefix_len, prefix_src);
+    let left_fences = split_fences.lower();
     Left::create(
         left,
         &SliceView {
@@ -328,15 +333,11 @@ pub fn split_at<
             len: split_index,
             src,
             fence_data: left_fences,
-            strip_prefix: left_fences.prefix_len - fences.prefix_len,
+            strip_prefix: left_fences.prefix_len - src_fences.prefix_len,
         },
     )
         .unwrap();
-    let right_fences = FenceData {
-        lower_fence: separator,
-        ..fences
-    }
-        .restrip();
+    let right_fences = split_fences.upper();
     Right::create(
         right,
         &SliceView {
@@ -344,11 +345,10 @@ pub fn split_at<
             len: src.key_count() - (split_index + 1),
             src,
             fence_data: right_fences,
-            strip_prefix: right_fences.prefix_len - fences.prefix_len,
+            strip_prefix: right_fences.prefix_len - src_fences.prefix_len,
         },
-    )
-        .unwrap();
-    Ok(())
+    ).unwrap();
+    Ok(split_fences)
 }
 
 pub fn split_in_place<
@@ -378,6 +378,8 @@ pub fn split_in_place<
                 &mut right,
                 split_index,
                 PrefixTruncatedKey(separator),
+                key_in_node,
+                parent_prefix_len,
             )?;
             let restored_separator = partial_restore(
                 0,

@@ -1,6 +1,6 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, InnerNode, LeafNode, Node};
-use crate::util::{common_prefix_len, merge_fences, partial_restore, short_slice};
+use crate::inner_node::{FenceData, FenceRef, InnerNode, LeafNode, Node};
+use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
@@ -264,13 +264,13 @@ impl HashLeaf {
 
     fn set_fences(
         &mut self,
-        FenceData {
+        fences @ FenceData {
             lower_fence,
             upper_fence,
             prefix_len,
         }: FenceData,
     ) {
-        debug_assert!(lower_fence <= upper_fence || upper_fence.0.is_empty());
+        fences.validate();
         self.head.prefix_len = prefix_len as u16;
         self.head.lower_fence = FenceKeySlot {
             offset: self.write_data(lower_fence.0),
@@ -302,12 +302,12 @@ impl HashLeaf {
 
     pub fn fences(&self) -> FenceData {
         FenceData {
-            lower_fence: PrefixTruncatedKey(short_slice(
+            lower_fence: FenceRef(short_slice(
                 self.as_bytes(),
                 self.head.lower_fence.offset,
                 self.head.lower_fence.len,
             )),
-            upper_fence: PrefixTruncatedKey(short_slice(
+            upper_fence: FenceRef(short_slice(
                 self.as_bytes(),
                 self.head.upper_fence.offset,
                 self.head.upper_fence.len,
@@ -407,10 +407,7 @@ impl HashLeaf {
             assert!(acc < 750.0);
         }
         self.assert_no_collide();
-        debug_assert!(
-            self.fences().lower_fence < self.fences().upper_fence
-                || self.fences().upper_fence.0.is_empty() && self.head.prefix_len == 0
-        );
+        self.fences().validate();
         for s in self.slots() {
             debug_assert!(s.offset >= self.head.data_offset);
         }
@@ -439,18 +436,7 @@ impl HashLeaf {
         // right.print();
         //TODO optimize
         let mut tmp = Self::new();
-        merge_fences(
-            FatTruncatedKey {
-                remainder: self.fences().lower_fence.0,
-                prefix_len: self.head.prefix_len as usize,
-            },
-            separator,
-            FatTruncatedKey {
-                remainder: right.fences().upper_fence.0,
-                prefix_len: right.head.prefix_len as usize,
-            },
-            |f| tmp.set_fences(f),
-        );
+        tmp.set_fences(MergeFences::new(self.fences(), separator, right.fences()).fences());
         let left = self.slots().iter().map(|s| (s, &*self));
         let right_iter = right.slots().iter().map(|s| (s, &*right));
         for (s, this) in left.chain(right_iter) {
@@ -511,29 +497,13 @@ unsafe impl Node for HashLeaf {
             (*node_left_raw).hash_leaf = ManuallyDrop::new(Self::new());
             &mut (*node_left_raw).hash_leaf
         };
-        node_left.set_fences(
-            FenceData {
-                upper_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
+
+        let mut split_fences = SplitFences::new(self.fences(), truncated_sep_key, parent_prefix_len, self.prefix(key_in_self));
+        node_left.set_fences(split_fences.lower());
         let mut node_right = Self::new();
-        node_right.set_fences(
-            FenceData {
-                lower_fence: truncated_sep_key,
-                ..self.fences()
-            }
-                .restrip(),
-        );
-        let parent_sep = partial_restore(
-            0,
-            &[self.prefix(key_in_self), truncated_sep_key.0],
-            parent_prefix_len,
-        );
-        let parent_sep = PrefixTruncatedKey(&parent_sep);
+        node_right.set_fences(split_fences.upper());
         unsafe {
-            if let Err(()) = parent.insert_child(index_in_parent, parent_sep, node_left_raw) {
+            if let Err(()) = parent.insert_child(index_in_parent, split_fences.separator(), node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);
                 return Err(());
             }
@@ -571,12 +541,11 @@ unsafe impl Node for HashLeaf {
     }
 
     fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
-        debug_assert_eq!(
-            self.head.prefix_len as usize,
-            common_prefix_len(lower, upper)
-        );
-        debug_assert_eq!(self.fences().lower_fence, self.truncate(&lower));
-        debug_assert_eq!(self.fences().upper_fence, self.truncate(&upper));
+        debug_assert_eq!(self.fences(), FenceData {
+            prefix_len: 0,
+            lower_fence: FenceRef(lower),
+            upper_fence: FenceRef(upper),
+        }.restrip());
     }
 }
 

@@ -1,6 +1,7 @@
-use crate::inner_node::FenceData;
+use crate::inner_node::{FenceData, FenceRef};
 use crate::{FatTruncatedKey, HeadTruncatedKey, PrefixTruncatedKey};
 use smallvec::SmallVec;
+use crate::btree_node::STRIP_PREFIX;
 
 pub fn head(key: PrefixTruncatedKey) -> (u32, HeadTruncatedKey) {
     let mut k_padded = [0u8; 4];
@@ -45,48 +46,149 @@ pub fn partial_restore(
 
 pub type SmallBuff = SmallVec<[u8; 32]>;
 
-pub fn merge_fences<R>(
-    left: FatTruncatedKey,
-    separator: FatTruncatedKey,
-    right: FatTruncatedKey,
-    set_fences: impl FnOnce(FenceData) -> R,
-) -> R {
-    debug_assert!(left.prefix_len >= separator.prefix_len);
-    debug_assert!(right.prefix_len >= separator.prefix_len);
-    if left.prefix_len == right.prefix_len {
-        set_fences(FenceData {
-            lower_fence: PrefixTruncatedKey(left.remainder),
-            upper_fence: PrefixTruncatedKey(right.remainder),
-            prefix_len: left.prefix_len,
-        })
-    } else if left.prefix_len > right.prefix_len {
-        let lower = partial_restore(
-            separator.prefix_len,
-            &[
-                &separator.remainder[..left.prefix_len - separator.prefix_len],
-                left.remainder,
-            ],
-            right.prefix_len,
-        );
-        set_fences(FenceData {
-            lower_fence: PrefixTruncatedKey(&lower),
-            upper_fence: PrefixTruncatedKey(right.remainder),
-            prefix_len: right.prefix_len,
-        })
-    } else {
-        let upper = partial_restore(
-            separator.prefix_len,
-            &[
-                &separator.remainder[..right.prefix_len - separator.prefix_len],
-                right.remainder,
-            ],
-            left.prefix_len,
-        );
-        set_fences(FenceData {
-            lower_fence: PrefixTruncatedKey(left.remainder),
-            upper_fence: PrefixTruncatedKey(&upper),
-            prefix_len: left.prefix_len,
-        })
+/// helper for node split.
+/// computes new fences and new separator for parent.
+pub struct SplitFences<'a> {
+    buffer: Option<SmallBuff>,
+    src: FenceData<'a>,
+    parent_prefix_len: usize,
+    separator: PrefixTruncatedKey<'a>,
+    prefix_src: &'a [u8],
+}
+
+impl<'a> SplitFences<'a> {
+    pub fn new(src: FenceData<'a>, separator: PrefixTruncatedKey<'a>, parent_prefix_len: usize, prefix_src: &'a [u8]) -> Self {
+        Self {
+            buffer: None,
+            src,
+            parent_prefix_len,
+            separator,
+            prefix_src,
+        }
+    }
+
+    pub fn separator(&mut self) -> PrefixTruncatedKey {
+        if STRIP_PREFIX {
+            PrefixTruncatedKey(self.init_buffer().as_slice())
+        } else {
+            let p = self.parent_prefix_len;
+            PrefixTruncatedKey(&self.init_buffer()[p..])
+        }
+    }
+
+    pub fn lower(&mut self) -> FenceData {
+        let src = self.src;
+        FenceData {
+            upper_fence: self.fence_sep(),
+            ..src
+        }.restrip()
+    }
+
+    pub fn upper(&mut self) -> FenceData {
+        let src = self.src;
+        FenceData {
+            lower_fence: self.fence_sep(),
+            ..src
+        }.restrip()
+    }
+
+    fn init_buffer(&mut self) -> &mut SmallBuff {
+        self.buffer.get_or_insert_with(|| partial_restore(
+            0,
+            &[&self.prefix_src[..self.src.prefix_len], self.separator.0],
+            if STRIP_PREFIX { self.parent_prefix_len } else { 0 },
+        ))
+    }
+
+    fn fence_sep(&mut self) -> FenceRef {
+        if STRIP_PREFIX {
+            FenceRef(self.separator.0)
+        } else {
+            FenceRef(self.init_buffer().as_slice())
+        }
+    }
+}
+
+#[cfg(feature = "strip-prefix_true")]
+pub struct MergeFences<'a> {
+    buffer: once_cell::unsync::OnceCell<SmallBuff>,
+    left_fences: FenceData<'a>,
+    separator: FatTruncatedKey<'a>,
+    right_fences: FenceData<'a>,
+}
+
+#[cfg(feature = "strip-prefix_false")]
+pub struct MergeFences<'a> {
+    fences: FenceData<'a>,
+}
+
+
+impl<'a> MergeFences<'a> {
+    pub fn new(
+        left_fences: FenceData<'a>,
+        #[allow(unused_variables)]
+        separator: FatTruncatedKey<'a>,
+        right_fences: FenceData<'a>,
+    ) -> Self {
+        #[cfg(feature = "strip-prefix_true")]
+        return {
+            debug_assert!(left_fences.prefix_len >= separator.prefix_len);
+            debug_assert!(right_fences.prefix_len >= separator.prefix_len);
+            MergeFences {
+                buffer: once_cell::unsync::OnceCell::new(),
+                left_fences,
+                separator,
+                right_fences,
+            }
+        };
+        #[cfg(feature = "strip-prefix_false")]
+        return MergeFences {
+            fences: FenceData {
+                prefix_len: left_fences.prefix_len.min(right_fences.prefix_len),
+                lower_fence: left_fences.lower_fence,
+                upper_fence: right_fences.upper_fence,
+            }
+        };
+    }
+
+    pub fn fences(&self) -> FenceData {
+        #[cfg(feature = "strip-prefix_true")]return {
+            if self.left_fences.prefix_len == self.right_fences.prefix_len {
+                FenceData {
+                    lower_fence: self.left_fences.lower_fence,
+                    upper_fence: self.right_fences.upper_fence,
+                    prefix_len: self.left_fences.prefix_len,
+                }
+            } else if self.left_fences.prefix_len > self.right_fences.prefix_len {
+                let lower = self.buffer.get_or_init(|| partial_restore(
+                    self.separator.prefix_len,
+                    &[
+                        &self.separator.remainder[..self.left_fences.prefix_len - self.separator.prefix_len],
+                        self.left_fences.lower_fence.0,
+                    ],
+                    self.right_fences.prefix_len,
+                ));
+                FenceData {
+                    lower_fence: FenceRef(&lower),
+                    ..self.right_fences
+                }
+            } else {
+                let upper = self.buffer.get_or_init(|| partial_restore(
+                    self.separator.prefix_len,
+                    &[
+                        &self.separator.remainder[..self.right_fences.prefix_len - self.separator.prefix_len],
+                        self.right_fences.upper_fence.0,
+                    ],
+                    self.left_fences.prefix_len,
+                ));
+                FenceData {
+                    upper_fence: FenceRef(&upper),
+                    ..self.left_fences
+                }
+            }
+        };
+        #[cfg(feature = "strip-prefix_false")]
+        return self.fences;
     }
 }
 

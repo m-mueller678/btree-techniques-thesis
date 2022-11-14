@@ -19,6 +19,10 @@ pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackIn
 #[cfg(feature = "inner_ascii")]
 pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<head_node::AsciiHeadNode, BasicNode>;
 
+#[cfg(feature = "strip-prefix_true")]
+pub const STRIP_PREFIX: bool = true;
+#[cfg(feature = "strip-prefix_false")]
+pub const STRIP_PREFIX: bool = false;
 
 pub const PAGE_SIZE: usize = 4096;
 
