@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt::{Debug, Formatter};
 use std::io::{Write};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
@@ -236,6 +237,45 @@ impl ArtNode {
     }
 }
 
+struct NodeDebugWrapper<'a> {
+    page: &'a ArtNode,
+    offset: u16,
+}
+
+impl Debug for NodeDebugWrapper<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.offset & NODE_REF_IS_RANGE != 0 {
+            let mut s = f.debug_tuple("RangeIndex");
+            s.field(&(self.offset & !NODE_REF_IS_RANGE));
+            return s.finish();
+        }
+        match unsafe { self.page.read_node(self.offset) } {
+            (key_count, keys, Ok(children)) => {
+                let mut s = f.debug_struct("Decision");
+                s.field("_", &NodeDebugWrapper { offset: children[0], page: self.page });
+                for i in 0..key_count {
+                    s.field(&format!("{:?}", keys[i]), &NodeDebugWrapper { offset: children[i + 1], page: self.page });
+                }
+                s.finish()
+            }
+            (key_count, keys, Ok(children)) => {
+                let mut s = f.debug_struct("Decision");
+                s.field("_", &NodeDebugWrapper { offset: children[0], page: self.page });
+                for i in 0..key_count {
+                    s.field(&format!("{:?}", keys[i]), &NodeDebugWrapper { offset: children[i + 1], page: self.page });
+                }
+                s.finish()
+            }
+            (span_len, span, Err(child)) => {
+                let mut s = f.debug_struct("Decision");
+                s.field("span", &span);
+                s.field("child", &NodeDebugWrapper { offset: child, page: self.page });
+                s.finish()
+            }
+        }
+    }
+}
+
 #[test]
 fn test_tree() {
     use rand::*;
@@ -244,9 +284,13 @@ fn test_tree() {
     let max_len = 5;
     let mut radixes: Vec<u8> = (0..max_len).map(|i| rng.gen_range(0..32)).collect();
     let insert_count = 5;
-    let keys: Vec<Vec<u8>> = (0..insert_count).map(|_| {
+    let lookup_count = 30;
+    let mut gen_key = || {
         let len = rng.gen_range(0..=max_len);
         (0..len).map(|i| { rng.gen_range(0..=radixes[i]) }).collect()
+    };
+    let keys: Vec<Vec<u8>> = (0..insert_count).map(|_| {
+        gen_key()
     }).collect();
     let mut keys: Vec<PrefixTruncatedKey> = keys.iter().map(|v| PrefixTruncatedKey(&**v)).collect();
     keys.sort();
@@ -264,5 +308,24 @@ fn test_tree() {
             _bytes: unsafe { std::mem::zeroed() },
         },
     };
-    let root_node = node.construct(&keys, 0..keys.len(), 0);
+    node.push_range_array_entry(0);
+    let root_node = node.construct(&keys, 0..keys.len(), 0).unwrap();
+
+    eprintln!("keys");
+    for k in &keys {
+        eprintln!("\t{:3?}", k.0);
+    }
+
+    eprintln!("{:#?}", NodeDebugWrapper { offset: root_node, page: &node });
+
+    for &k in keys.iter()
+    {
+        unsafe {
+            let found = node.find_key_range(k.0, root_node);
+            let range = node.data.range_array[found as usize - 1] as usize..node.data.range_array[found as usize] as usize;
+            eprintln!("\t{:3?} -> {:?}", k.0, range);
+            assert!(keys[range.start] <= k);
+            assert!(range.end == keys.len() || k < keys[range.end]);
+        }
+    }
 }
