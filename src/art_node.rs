@@ -66,8 +66,9 @@ impl ArtNode {
     }
 
     fn construct(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+        debug_assert!(key_range.len() > 0);
         if key_range.len() < 3 {
-            return Ok(self.push_range_array_entry(key_range.end as u16) | NODE_REF_IS_RANGE);
+            return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
         }
         let new_prefix_len = common_prefix_len(&keys[key_range.start].0[prefix_len..], &keys[key_range.end - 1].0[prefix_len..]);
         if new_prefix_len > 0 {
@@ -75,7 +76,7 @@ impl ArtNode {
             self.construct_inner_decision_node(&keys, key_range.clone(), prefix_len + new_prefix_len);
             self.push_range_array_entry(key_range.end as u16);
             self.set_heap_write_pos_mod_2(new_prefix_len as u16);
-            self.heap_write(&keys[key_range.start][prefix_len..][..new_prefix_len]);
+            self.heap_write(&keys[key_range.start][prefix_len..][..new_prefix_len])?;
             self.assert_heap_write_aligned();
             self.heap_write((new_prefix_len as u16).to_ne_bytes().as_slice())?;
             Ok(self.heap_write(NODE_TAG_SPAN.to_ne_bytes().as_slice())? as u16)
@@ -147,13 +148,16 @@ impl ArtNode {
     }
 
     fn construct_inner_decision_node(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+        dbg!(keys,&key_range,prefix_len);
+        debug_assert!(keys[key_range.clone()].iter().all(|k| k.0.len() >= prefix_len));
+        debug_assert!(keys[key_range.clone()][1..].iter().all(|k| k.0.len() > prefix_len));
         let mut children = SmallVec::<[u16; 64]>::new();
         {
-            let current_byte = keys.first().unwrap()[prefix_len];
+            let current_byte = keys[key_range.start].get(prefix_len).copied().unwrap_or(0);
             let mut range_start = key_range.start;
-            for (i, b) in keys[key_range.clone()].iter().map(|k| k.0[prefix_len]).enumerate()
+            for (i, b) in keys[key_range.clone()].iter().skip(1).map(|k| k.0[prefix_len]).enumerate()
             {
-                let i = i + key_range.start;
+                let i = i + key_range.start + 1;
                 if b != current_byte {
                     children.push(self.construct(keys, range_start..i, prefix_len)?);
                     range_start = i;
@@ -169,7 +173,7 @@ impl ArtNode {
             self.write_to(pos + 2, (key_count as u16).to_ne_bytes().as_slice());
             {
                 let _child_index = 0;
-                let current_byte = keys.first().unwrap()[prefix_len];
+                let current_byte = keys[key_range.start][prefix_len];
                 let mut keys_slice = &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4..][..key_count];
                 for b in keys.iter().map(|k| k.0[prefix_len]) {
                     if b != current_byte {
@@ -219,8 +223,17 @@ impl ArtNode {
         }
     }
 
-    fn push_range_array_entry(&mut self, _index: u16) -> u16 {
-        todo!()
+    fn push_range_array_entry(&mut self, index: u16) -> Result<u16, ()> {
+        if self.free_space() < 2 {
+            return Err(())
+        } else {
+            let pos = self.head.range_array_len;
+            unsafe {
+                self.data.range_array[pos as usize] = index;
+            }
+            self.head.range_array_len += 1;
+            Ok(pos)
+        }
     }
 }
 
@@ -229,14 +242,16 @@ fn test_tree() {
     use rand::*;
 
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
-    let max_len = 20;
+    let max_len = 5;
     let mut radixes: Vec<u8> = (0..max_len).map(|i| rng.gen_range(0..32)).collect();
-    let insert_count = 40;
+    let insert_count = 5;
     let keys: Vec<Vec<u8>> = (0..insert_count).map(|_| {
         let len = rng.gen_range(0..=max_len);
         (0..len).map(|i| { rng.gen_range(0..=radixes[i]) }).collect()
     }).collect();
-    let keys: Vec<PrefixTruncatedKey> = keys.iter().map(|v| PrefixTruncatedKey(&**v)).collect();
+    let mut keys: Vec<PrefixTruncatedKey> = keys.iter().map(|v| PrefixTruncatedKey(&**v)).collect();
+    keys.sort();
+    keys.dedup();
 
     let mut node = ArtNode {
         head: ArtNodeHead {

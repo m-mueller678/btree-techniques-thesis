@@ -23,7 +23,6 @@ bstr = "1.0.1"
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
-opt-level = 3
 
 [profile.release]
 lto = true
@@ -34,7 +33,7 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_basic", "leaf_basic", "hash-leaf-simd_32", "strip-prefix_true"]
+default = ["head-early-abort-create_false", "inner_basic", "leaf_basic", "hash-leaf-simd_32", "strip-prefix_false"]
 head-early-abort-create_false = []
 inner_basic = []
 leaf_basic = []
