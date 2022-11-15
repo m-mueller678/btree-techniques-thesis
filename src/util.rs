@@ -57,6 +57,7 @@ pub struct SplitFences<'a> {
 }
 
 impl<'a> SplitFences<'a> {
+    #[inline(always)]
     pub fn new(src: FenceData<'a>, separator: PrefixTruncatedKey<'a>, parent_prefix_len: usize, prefix_src: &'a [u8]) -> Self {
         Self {
             buffer: None,
@@ -67,6 +68,7 @@ impl<'a> SplitFences<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn separator(&mut self) -> PrefixTruncatedKey {
         if STRIP_PREFIX {
             PrefixTruncatedKey(self.init_buffer().as_slice())
@@ -76,6 +78,7 @@ impl<'a> SplitFences<'a> {
         }
     }
 
+    #[inline(always)]
     pub fn lower(&mut self) -> FenceData {
         let src = self.src;
         FenceData {
@@ -84,6 +87,7 @@ impl<'a> SplitFences<'a> {
         }.restrip()
     }
 
+    #[inline(always)]
     pub fn upper(&mut self) -> FenceData {
         let src = self.src;
         FenceData {
@@ -92,6 +96,7 @@ impl<'a> SplitFences<'a> {
         }.restrip()
     }
 
+    #[inline(always)]
     fn init_buffer(&mut self) -> &mut SmallBuff {
         self.buffer.get_or_insert_with(|| partial_restore(
             0,
@@ -100,6 +105,7 @@ impl<'a> SplitFences<'a> {
         ))
     }
 
+    #[inline(always)]
     fn fence_sep(&mut self) -> FenceRef {
         if STRIP_PREFIX {
             FenceRef(self.separator.0)
@@ -124,6 +130,7 @@ pub struct MergeFences<'a> {
 
 
 impl<'a> MergeFences<'a> {
+    #[inline(always)]
     pub fn new(
         left_fences: FenceData<'a>,
         #[allow(unused_variables)]
@@ -151,6 +158,7 @@ impl<'a> MergeFences<'a> {
         };
     }
 
+    #[inline(always)]
     pub fn fences(&self) -> FenceData {
         #[cfg(feature = "strip-prefix_true")]return {
             if self.left_fences.prefix_len == self.right_fences.prefix_len {
