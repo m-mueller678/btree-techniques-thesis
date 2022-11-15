@@ -172,10 +172,9 @@ impl ArtNode {
             self.write_to(pos, NODE_TAG_DECISION.to_ne_bytes().as_slice());
             self.write_to(pos + 2, (key_count as u16).to_ne_bytes().as_slice());
             {
-                let _child_index = 0;
-                let current_byte = keys[key_range.start][prefix_len];
+                let current_byte = keys[key_range.start].get(prefix_len).copied().unwrap_or(0);
                 let mut keys_slice = &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4..][..key_count];
-                for b in keys.iter().map(|k| k.0[prefix_len]) {
+                for b in keys.iter().skip(1).map(|k| k.0[prefix_len]) {
                     if b != current_byte {
                         keys_slice.write_all(&[b]).unwrap();
                     }
