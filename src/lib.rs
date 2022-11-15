@@ -23,8 +23,6 @@ pub mod head_node;
 pub mod inner_node;
 pub mod op_count;
 pub mod util;
-#[cfg(test)]
-mod tests;
 mod vtables;
 pub mod node_stats;
 pub mod art_node;

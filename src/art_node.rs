@@ -223,3 +223,32 @@ impl ArtNode {
         todo!()
     }
 }
+
+#[test]
+fn test_tree() {
+    use rand::*;
+
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
+    let max_len = 20;
+    let mut radixes: Vec<u8> = (0..max_len).map(|i| rng.gen_range(0..32)).collect();
+    let insert_count = 40;
+    let keys: Vec<Vec<u8>> = (0..insert_count).map(|_| {
+        let len = rng.gen_range(0..=max_len);
+        (0..len).map(|i| { rng.gen_range(0..=radixes[i]) }).collect()
+    }).collect();
+    let keys: Vec<PrefixTruncatedKey> = keys.iter().map(|v| PrefixTruncatedKey(&**v)).collect();
+
+    let mut node = ArtNode {
+        head: ArtNodeHead {
+            tag: BTreeNodeTag::BasicLeaf,
+            child_count: 0,
+            data_write: PAGE_SIZE as u16,
+            range_array_len: 0,
+            key_count: 0,
+        },
+        data: ArtNodeData {
+            _bytes: unsafe { std::mem::zeroed() },
+        },
+    };
+    let root_node = node.construct(&keys, 0..keys.len(), 0);
+}
