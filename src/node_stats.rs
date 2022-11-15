@@ -2,7 +2,7 @@ use counter::Counter;
 use crate::{BTree, BTreeNode};
 use crate::vtables::BTreeNodeTag;
 
-pub struct NodeData {
+pub struct InnerNodeData {
     pub depth: usize,
     pub prefix_len: usize,
     pub fences: [Vec<u8>; 2],
@@ -10,9 +10,17 @@ pub struct NodeData {
     pub tag: BTreeNodeTag,
 }
 
-pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<NodeData> {
+fn total_node_count(stats: &[InnerNodeData]) -> usize {
+    let max_depth = stats.iter().map(|n| n.depth).max().unwrap();
+    let leaf_count: usize = stats.iter().filter(|n| n.depth == max_depth).map(|n| n.keys.len() + 1).sum();
+    let lc2 = stats.iter().map(|n| n.keys.len() + 1).sum::<usize>() + 1;
+    dbg!(leaf_count+stats.len(),lc2);
+    lc2
+}
+
+pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<InnerNodeData> {
     let mut ret = Vec::new();
-    fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<NodeData>) {
+    fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<InnerNodeData>) {
         let mut buffer = [0u8; 1 << 9];
         if node.tag().is_leaf() {
             return;
@@ -20,7 +28,7 @@ pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<NodeData> {
         let tag = node.tag();
         let node = node.to_inner();
         let fences = node.fences();
-        let mut data = NodeData {
+        let mut data = InnerNodeData {
             depth,
             prefix_len: fences.prefix_len,
             fences: [fences.lower_fence.0.to_vec(), fences.upper_fence.0.to_vec()],
@@ -56,4 +64,5 @@ pub fn print_stats(b_tree: &BTree) {
     for (l, c) in inner_length_counts.k_most_common_ordered(10) {
         eprintln!("\t{:3}: {:5.2}%", l, c as f64 / total_inner_keys as f64 * 100.0)
     };
+    eprintln!("node count: {}", total_node_count(&nodes));
 }
