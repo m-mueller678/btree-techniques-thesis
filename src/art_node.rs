@@ -148,18 +148,19 @@ impl ArtNode {
         }
     }
 
+    // TODO: how to handle [[],[0,...],[0,...],...]?
+    //       0 key cannot split -> cannot create span node in next step
+    //       decision four cases: less, equal, greater, empty?
+    //       span four cases: prefix less, prefix greater, same as prefix, prefix is prefix of key
     fn construct_inner_decision_node(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         dbg!(keys,&key_range,prefix_len);
         debug_assert!(keys[key_range.clone()].iter().all(|k| k.0.len() >= prefix_len));
         debug_assert!(keys[key_range.clone()][1..].iter().all(|k| k.0.len() > prefix_len));
         let mut children = SmallVec::<[u16; 64]>::new();
         {
-            let current_byte = keys[key_range.start].get(prefix_len).copied().unwrap_or(0);
             let mut range_start = key_range.start;
-            for (i, b) in keys[key_range.clone()].iter().skip(1).map(|k| k.0[prefix_len]).enumerate()
-            {
-                let i = i + key_range.start + 1;
-                if b != current_byte {
+            for i in range_start + 1..key_range.end {
+                if (i == range_start + 1 && keys[i - 1].len() == prefix_len) || keys[i - 1][prefix_len] != keys[i][prefix_len] {
                     children.push(self.construct(keys, range_start..i, prefix_len)?);
                     range_start = i;
                 }
@@ -173,11 +174,11 @@ impl ArtNode {
             self.write_to(pos, NODE_TAG_DECISION.to_ne_bytes().as_slice());
             self.write_to(pos + 2, (key_count as u16).to_ne_bytes().as_slice());
             {
-                let current_byte = keys[key_range.start].get(prefix_len).copied().unwrap_or(0);
                 let mut keys_slice = &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4..][..key_count];
-                for b in keys.iter().skip(1).map(|k| k.0[prefix_len]) {
-                    if b != current_byte {
-                        keys_slice.write_all(&[b]).unwrap();
+                let mut range_start = key_range.start;
+                for i in range_start + 1..key_range.end {
+                    if (i == range_start + 1 && keys[i - 1].len() == prefix_len) || keys[i - 1][prefix_len] != keys[i][prefix_len] {
+                        keys_slice.write_all(&[keys[i - 1][prefix_len]]).unwrap();
                     }
                 }
                 debug_assert!(keys_slice.is_empty());
@@ -276,8 +277,7 @@ impl Debug for NodeDebugWrapper<'_> {
     }
 }
 
-#[test]
-fn test_tree() {
+pub fn test_tree() {
     use rand::*;
 
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);

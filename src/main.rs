@@ -1,7 +1,7 @@
 #![feature(is_sorted)]
 
 
-use btree::{PrefixTruncatedKey};
+use btree::{art_node, PrefixTruncatedKey};
 
 
 use std::hint::black_box;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
+use btree::art_node::ArtNode;
 use btree::head_node::{AsciiHead, FullKeyHead};
 
 
@@ -111,5 +112,5 @@ fn perf<H: FullKeyHead>() {
 }
 
 fn main() {
-    perf::<AsciiHead>()
+    art_node::test_tree();
 }
