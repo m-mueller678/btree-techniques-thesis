@@ -71,6 +71,7 @@ impl ArtNode {
     fn construct(&mut self, keys: &[PrefixTruncatedKey], mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         debug_assert!(key_range.len() > 0);
         let mut full_prefix = prefix_len;
+        let initial_range_start = key_range.start;
         loop {
             if key_range.len() < 3 {
                 dbg!(&key_range);
@@ -85,7 +86,7 @@ impl ArtNode {
             }
         }
         let ret = if full_prefix > prefix_len {
-            self.push_range_array_entry(key_range.start as u16)?;
+            self.push_range_array_entry(initial_range_start as u16)?;
             let child = self.construct_inner_decision_node(&keys, key_range.clone(), full_prefix)?;
             self.push_range_array_entry(key_range.end as u16)?;
             let span_len = full_prefix - prefix_len;
@@ -310,8 +311,7 @@ pub fn test_tree() {
         let mut r = rng.clone();
         r.jump();
         Some(r)
-    }).enumerate()
-        .skip(15) {
+    }).enumerate() {
         dbg!(iteration);
         let radixes: Vec<u8> = (0..max_len).map(|_| rng.gen_range(0..32)).collect();
         let mut gen_key = || {
