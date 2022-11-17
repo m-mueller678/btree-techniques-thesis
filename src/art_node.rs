@@ -66,15 +66,19 @@ impl ArtNode {
         (key_count, node_bytes, extra)
     }
 
-    fn construct(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+    fn construct(&mut self, keys: &[PrefixTruncatedKey], mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         debug_assert!(key_range.len() > 0);
         if key_range.len() < 3 {
             return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
         }
+        if keys[key_range.start].0.len() == prefix_len {
+            key_range.start += 1;
+            return self.construct(keys, key_range, prefix_len);
+        }
         let new_prefix_len = common_prefix_len(&keys[key_range.start].0[prefix_len..], &keys[key_range.end - 1].0[prefix_len..]);
         if new_prefix_len > 0 {
             self.push_range_array_entry(key_range.start as u16);
-            self.construct_inner_decision_node(&keys, key_range.clone(), prefix_len + new_prefix_len);
+            self.construct_inner_decision_node(&keys, key_range.clone(), prefix_len + new_prefix_len)?;
             self.push_range_array_entry(key_range.end as u16);
             self.set_heap_write_pos_mod_2(new_prefix_len as u16);
             self.heap_write(&keys[key_range.start][prefix_len..][..new_prefix_len])?;
@@ -226,7 +230,7 @@ impl ArtNode {
 
     fn push_range_array_entry(&mut self, index: u16) -> Result<u16, ()> {
         if self.free_space() < 2 {
-            return Err(())
+            return Err(());
         } else {
             let pos = self.head.range_array_len;
             unsafe {
@@ -283,8 +287,8 @@ pub fn test_tree() {
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
     let max_len = 5;
     let mut radixes: Vec<u8> = (0..max_len).map(|i| rng.gen_range(0..32)).collect();
-    let insert_count = 5;
-    let lookup_count = 30;
+    let insert_count = 20;
+    let lookup_count = 50;
     let mut gen_key = || {
         let len = rng.gen_range(0..=max_len);
         (0..len).map(|i| { rng.gen_range(0..=radixes[i]) }).collect()
@@ -318,8 +322,7 @@ pub fn test_tree() {
 
     eprintln!("{:#?}", NodeDebugWrapper { offset: root_node, page: &node });
 
-    for &k in keys.iter()
-    {
+    let test_key = |k: PrefixTruncatedKey| {
         unsafe {
             let found = node.find_key_range(k.0, root_node);
             let range = node.data.range_array[found as usize - 1] as usize..node.data.range_array[found as usize] as usize;
@@ -327,5 +330,15 @@ pub fn test_tree() {
             assert!(keys[range.start] <= k);
             assert!(range.end == keys.len() || k < keys[range.end]);
         }
+    };
+
+    for &k in keys.iter()
+    {
+        test_key(k)
+    }
+
+    for _ in 0..lookup_count {
+        let k = gen_key();
+        test_key(PrefixTruncatedKey(&k));
     }
 }
