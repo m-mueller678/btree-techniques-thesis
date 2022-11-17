@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
-use btree::art_node::ArtNode;
 use btree::head_node::{AsciiHead, FullKeyHead};
 
 
