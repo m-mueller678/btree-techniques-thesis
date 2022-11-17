@@ -105,13 +105,12 @@ impl ArtNode {
         } else {
             self.construct_inner_decision_node(&keys, key_range, full_prefix)
         };
-        eprintln!("KK {:#?}", NodeDebugWrapper { offset: ret?, page: &self });
         ret
     }
 
     unsafe fn node_min(&self, node: u16) -> u16 {
         if (node & NODE_REF_IS_RANGE) != 0 {
-            return (node & !NODE_REF_IS_RANGE) - 1;
+            return (node & !NODE_REF_IS_RANGE);
         }
         let (_node_bytes, extra) = self.read_node(node);
         match extra {
@@ -119,14 +118,14 @@ impl ArtNode {
                 self.node_min(children[0])
             }
             Err(child_offset) => {
-                self.node_min(child_offset)
+                self.node_min(child_offset) - 1
             }
         }
     }
 
     unsafe fn node_max(&self, node: u16) -> u16 {
         if (node & NODE_REF_IS_RANGE) != 0 {
-            return (node & !NODE_REF_IS_RANGE) + 1;
+            return (node & !NODE_REF_IS_RANGE);
         }
         let (_node_bytes, extra) = self.read_node(node);
         match extra {
@@ -134,7 +133,7 @@ impl ArtNode {
                 self.node_max(*children.last().unwrap())
             }
             Err(child_offset) => {
-                self.node_max(child_offset)
+                self.node_max(child_offset) + 1
             }
         }
     }
@@ -176,7 +175,6 @@ impl ArtNode {
     //       decision four cases: less, equal, greater, empty?
     //       span four cases: prefix less, prefix greater, same as prefix, prefix is prefix of key
     fn construct_inner_decision_node(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
-        dbg!(&keys[key_range.clone()],prefix_len);
         let mut children = SmallVec::<[u16; 64]>::new();
         {
             let mut range_start = key_range.start;
