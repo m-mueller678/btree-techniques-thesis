@@ -73,9 +73,7 @@ impl ArtNode {
         let mut full_prefix = prefix_len;
         let initial_range_start = key_range.start;
         if key_range.len() < 3 {
-            dbg!(&key_range);
-            eprintln!("{:?}", &keys[key_range.clone()]);
-            return Ok(dbg!(self.push_range_array_entry(key_range.end as u16)?) | NODE_REF_IS_RANGE);
+            return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
         }
         full_prefix += common_prefix_len(&keys[key_range.start].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
         while keys[key_range.start].len() == full_prefix {
@@ -84,12 +82,10 @@ impl ArtNode {
                 key_range.start += 1;
                 full_prefix += without_first;
                 if key_range.len() < 3 {
-                    dbg!(&key_range);
-                    eprintln!("{:?}", &keys[key_range.clone()]);
-                    return Ok(dbg!(self.push_range_array_entry(key_range.end as u16)?) | NODE_REF_IS_RANGE);
+                    return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
                 }
             } else {
-                break
+                break;
             }
         }
         let ret = if full_prefix > prefix_len {
@@ -307,9 +303,9 @@ impl Debug for ArtNode {
 
 pub fn test_tree() {
     use rand::*;
-    let max_len = 5;
-    let insert_count = 10;
-    let lookup_count = 50;
+    let max_len = 10;
+    let insert_count = 100;
+    let lookup_count = 200;
 
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
     for (iteration, mut rng) in std::iter::successors(Some(rng), |rng| {
@@ -342,22 +338,13 @@ pub fn test_tree() {
                 _bytes: unsafe { std::mem::zeroed() },
             },
         };
+        dbg!(PAGE_SIZE - node.head.data_write as usize);
         node.push_range_array_entry(0).unwrap();
         let root_node = node.construct(&keys, 0..keys.len(), 0).unwrap();
-
-        eprintln!("keys:");
-        for k in &keys {
-            eprintln!("\t{:3?}", k.0);
-        }
-
-        eprintln!("{:#?}", NodeDebugWrapper { offset: root_node, page: &node });
-        eprintln!("{:#?}", &node);
-
         let test_key = |k: PrefixTruncatedKey| {
             unsafe {
                 let found = node.find_key_range(k.0, root_node);
                 let range = node.data.range_array[found as usize - 1] as usize..node.data.range_array[found as usize] as usize;
-                eprintln!("\t{:3?} -> {} -> {:?} -> {:?}", k.0, found, range, &keys[range.clone()]);
                 assert!(range.start == keys.len() || keys[range.start] <= k || range.start == 0 || keys[range.start - 1] < k);
                 assert!(range.end == keys.len() || k < keys[range.end]);
             }
