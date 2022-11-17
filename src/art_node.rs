@@ -72,21 +72,28 @@ impl ArtNode {
         debug_assert!(key_range.len() > 0);
         let mut full_prefix = prefix_len;
         let initial_range_start = key_range.start;
-        loop {
-            if key_range.len() < 3 {
-                dbg!(&key_range);
-                eprintln!("{:?}", &keys[key_range.clone()]);
-                return Ok(dbg!(self.push_range_array_entry(key_range.end as u16)?) | NODE_REF_IS_RANGE);
-            }
-            full_prefix += common_prefix_len(&keys[key_range.start].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
-            if keys[key_range.start].0.len() == full_prefix {
+        if key_range.len() < 3 {
+            dbg!(&key_range);
+            eprintln!("{:?}", &keys[key_range.clone()]);
+            return Ok(dbg!(self.push_range_array_entry(key_range.end as u16)?) | NODE_REF_IS_RANGE);
+        }
+        full_prefix += common_prefix_len(&keys[key_range.start].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
+        while keys[key_range.start].len() == full_prefix {
+            let without_first = common_prefix_len(&keys[key_range.start + 1].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
+            if without_first > 0 {
                 key_range.start += 1;
+                full_prefix += without_first;
+                if key_range.len() < 3 {
+                    dbg!(&key_range);
+                    eprintln!("{:?}", &keys[key_range.clone()]);
+                    return Ok(dbg!(self.push_range_array_entry(key_range.end as u16)?) | NODE_REF_IS_RANGE);
+                }
             } else {
-                break;
+                break
             }
         }
         let ret = if full_prefix > prefix_len {
-            self.push_range_array_entry(initial_range_start as u16)?;
+            self.push_range_array_entry(key_range.start as u16)?;
             let child = self.construct_inner_decision_node(&keys, key_range.clone(), full_prefix)?;
             self.push_range_array_entry(key_range.end as u16)?;
             let span_len = full_prefix - prefix_len;
@@ -174,7 +181,7 @@ impl ArtNode {
         {
             let mut range_start = key_range.start;
             for i in range_start + 1..key_range.end {
-                if (i == range_start + 1 && keys[i - 1].len() == prefix_len) || keys[i - 1][prefix_len] != keys[i][prefix_len] {
+                if !(i == range_start + 1 && keys[i - 1].len() == prefix_len) && keys[i - 1][prefix_len] != keys[i][prefix_len] {
                     children.push(self.construct(keys, range_start..i, prefix_len)?);
                     range_start = i;
                 }
@@ -191,7 +198,7 @@ impl ArtNode {
                 let mut keys_slice = &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4..][..key_count];
                 let range_start = key_range.start;
                 for i in range_start + 1..key_range.end {
-                    if (i == range_start + 1 && keys[i - 1].len() == prefix_len) || keys[i - 1][prefix_len] != keys[i][prefix_len] {
+                    if !(i == range_start + 1 && keys[i - 1].len() == prefix_len) && keys[i - 1][prefix_len] != keys[i][prefix_len] {
                         keys_slice.write_all(&[keys[i - 1][prefix_len]]).unwrap();
                     }
                 }
@@ -353,7 +360,7 @@ pub fn test_tree() {
                 let found = node.find_key_range(k.0, root_node);
                 let range = node.data.range_array[found as usize - 1] as usize..node.data.range_array[found as usize] as usize;
                 eprintln!("\t{:3?} -> {} -> {:?} -> {:?}", k.0, found, range, &keys[range.clone()]);
-                assert!(keys[range.start] <= k || range.start == 0 || keys[range.start - 1] < k);
+                assert!(range.start == keys.len() || keys[range.start] <= k || range.start == 0 || keys[range.start - 1] < k);
                 assert!(range.end == keys.len() || k < keys[range.end]);
             }
         };
