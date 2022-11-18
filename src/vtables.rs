@@ -9,9 +9,9 @@ use std::ptr::DynMetadata;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{AsciiHeadNode, U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 
-static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerNode>>; 6] = [MaybeUninit::uninit(); 6];
+static mut INNER_VTABLES: [MaybeUninit<DynMetadata<dyn InnerNode>>; 7] = [MaybeUninit::uninit(); 7];
 static mut LEAF_VTABLES: [MaybeUninit<DynMetadata<dyn LeafNode>>; 2] = [MaybeUninit::uninit(); 2];
-static mut NODE_VTABLES: [MaybeUninit<DynMetadata<dyn Node>>; 12] = [MaybeUninit::uninit(); 12];
+static mut NODE_VTABLES: [MaybeUninit<DynMetadata<dyn Node>>; 14] = [MaybeUninit::uninit(); 14];
 
 /// must be called before BTreeNode methods are used
 pub fn init_vtables() {
@@ -45,6 +45,7 @@ pub fn init_vtables() {
     make_inner_vtables::<U32ZeroPaddedHeadNode>(BTreeNodeTag::U32ZeroPaddedHead);
     make_inner_vtables::<U64ZeroPaddedHeadNode>(BTreeNodeTag::U64ZeroPaddedHead);
     make_inner_vtables::<AsciiHeadNode>(BTreeNodeTag::AsciiHead);
+    make_inner_vtables::<AsciiHeadNode>(BTreeNodeTag::ArtInner);
 }
 
 #[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -58,6 +59,7 @@ pub enum BTreeNodeTag {
     U64ZeroPaddedHead = 7,
     U32ZeroPaddedHead = 9,
     AsciiHead = 11,
+    ArtInner = 13,
 }
 
 impl BTreeNodeTag {

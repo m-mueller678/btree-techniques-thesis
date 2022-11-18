@@ -3,8 +3,10 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Write};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
+use std::ptr;
 use smallvec::SmallVec;
-use crate::{PAGE_SIZE, PrefixTruncatedKey};
+use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
+use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, Node};
 use crate::util::{common_prefix_len, reinterpret, reinterpret_mut};
 use crate::vtables::BTreeNodeTag;
 
@@ -21,10 +23,13 @@ union ArtNodeData {
 #[derive(Debug)]
 struct ArtNodeHead {
     tag: BTreeNodeTag,
-    child_count: u16,
+    key_count: u16,
     data_write: u16,
     range_array_len: u16,
-    key_count: u16,
+    upper: *mut BTreeNode,
+    upper_fence: u16,
+    lower_fence: u16,
+    prefix_len: u16,
 }
 
 struct LayoutInfo {
@@ -32,6 +37,7 @@ struct LayoutInfo {
     page_indirection_vector: usize,
 }
 
+#[derive(Clone, Copy)]
 struct PageIndirectionVectorEntry {
     key_offset: u16,
     key_len: u16,
@@ -68,16 +74,16 @@ impl ArtNode {
         (node_bytes, extra)
     }
 
-    fn construct(&mut self, keys: &[PrefixTruncatedKey], mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+    fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         debug_assert!(key_range.len() > 0);
         let mut full_prefix = prefix_len;
         let initial_range_start = key_range.start;
         if key_range.len() < 3 {
             return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
         }
-        full_prefix += common_prefix_len(&keys[key_range.start].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
-        while keys[key_range.start].len() == full_prefix {
-            let without_first = common_prefix_len(&keys[key_range.start + 1].0[full_prefix..], &keys[key_range.clone()].last().unwrap().0[full_prefix..]);
+        full_prefix += common_prefix_len(&keys(self, key_range.start).0[full_prefix..], &keys(self, key_range.end - 1).0[full_prefix..]);
+        while keys(self, key_range.start).len() == full_prefix {
+            let without_first = common_prefix_len(&keys(self, key_range.start + 1).0[full_prefix..], &keys(self, key_range.end - 1).0[full_prefix..]);
             if without_first > 0 {
                 key_range.start += 1;
                 full_prefix += without_first;
@@ -90,23 +96,30 @@ impl ArtNode {
         }
         let ret = if full_prefix > prefix_len {
             self.push_range_array_entry(key_range.start as u16)?;
-            let child = self.construct_inner_decision_node(&keys, key_range.clone(), full_prefix)?;
+            let child = self.construct_inner_decision_node::<F>(&keys, key_range.clone(), full_prefix)?;
             self.push_range_array_entry(key_range.end as u16)?;
             let span_len = full_prefix - prefix_len;
             self.set_heap_write_pos_mod_2(span_len as u16)?;
-            self.heap_write(&keys[key_range.start][prefix_len..full_prefix])?;
+            unsafe {
+                // key_ptr may point into self, but will never overlap destination
+                let src = &keys(self, key_range.start)[prefix_len..full_prefix];
+                let src_ptr = src.as_ptr();
+                let src_len = src.len();
+                let offset = self.heap_alloc(src_len)?;
+                std::ptr::copy_nonoverlapping(src_ptr, (self as *mut Self as *mut u8).offset(offset as isize), src_len);
+            }
             self.assert_heap_write_aligned();
             self.heap_write((span_len as u16).to_ne_bytes().as_slice())?;
             Ok(self.heap_write(NODE_TAG_SPAN.to_ne_bytes().as_slice())? as u16)
         } else {
-            self.construct_inner_decision_node(&keys, key_range, full_prefix)
+            self.construct_inner_decision_node::<F>(&keys, key_range, full_prefix)
         };
         ret
     }
 
     unsafe fn node_min(&self, node: u16) -> u16 {
         if (node & NODE_REF_IS_RANGE) != 0 {
-            return (node & !NODE_REF_IS_RANGE);
+            return node & !NODE_REF_IS_RANGE;
         }
         let (_node_bytes, extra) = self.read_node(node);
         match extra {
@@ -121,7 +134,7 @@ impl ArtNode {
 
     unsafe fn node_max(&self, node: u16) -> u16 {
         if (node & NODE_REF_IS_RANGE) != 0 {
-            return (node & !NODE_REF_IS_RANGE);
+            return node & !NODE_REF_IS_RANGE;
         }
         let (_node_bytes, extra) = self.read_node(node);
         match extra {
@@ -170,17 +183,17 @@ impl ArtNode {
     //       0 key cannot split -> cannot create span node in next step
     //       decision four cases: less, equal, greater, empty?
     //       span four cases: prefix less, prefix greater, same as prefix, prefix is prefix of key
-    fn construct_inner_decision_node(&mut self, keys: &[PrefixTruncatedKey], key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+    fn construct_inner_decision_node<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         let mut children = SmallVec::<[u16; 64]>::new();
         {
             let mut range_start = key_range.start;
             for i in range_start + 1..key_range.end {
-                if !(i == range_start + 1 && keys[i - 1].len() == prefix_len) && keys[i - 1][prefix_len] != keys[i][prefix_len] {
-                    children.push(self.construct(keys, range_start..i, prefix_len)?);
+                if !(i == range_start + 1 && keys(self, i - 1).len() == prefix_len) && keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
+                    children.push(self.construct::<F>(keys, range_start..i, prefix_len)?);
                     range_start = i;
                 }
             }
-            children.push(self.construct(keys, range_start..key_range.end, prefix_len)?);
+            children.push(self.construct::<F>(keys, range_start..key_range.end, prefix_len)?);
         }
         let key_count = children.len() - 1;
         let key_array_size = key_count.next_multiple_of(2);
@@ -189,14 +202,14 @@ impl ArtNode {
             self.write_to(pos, NODE_TAG_DECISION.to_ne_bytes().as_slice());
             self.write_to(pos + 2, (key_count as u16).to_ne_bytes().as_slice());
             {
-                let mut keys_slice = &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4..][..key_count];
                 let range_start = key_range.start;
+                let mut next_write = 0;
                 for i in range_start + 1..key_range.end {
-                    if !(i == range_start + 1 && keys[i - 1].len() == prefix_len) && keys[i - 1][prefix_len] != keys[i][prefix_len] {
-                        keys_slice.write_all(&[keys[i - 1][prefix_len]]).unwrap();
+                    if !(i == range_start + 1 && keys(self, i - 1).len() == prefix_len) && keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
+                        reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4 + next_write] = keys(self, i - 1)[prefix_len];
+                        next_write += 1;
                     }
                 }
-                debug_assert!(keys_slice.is_empty());
             }
             self.write_to(pos + 4 + key_array_size, bytemuck::cast_slice::<u16, u8>(children.as_slice()));
         }
@@ -329,10 +342,13 @@ pub fn test_tree() {
         let mut node = ArtNode {
             head: ArtNodeHead {
                 tag: BTreeNodeTag::BasicLeaf,
-                child_count: 0,
+                key_count: 0,
                 data_write: PAGE_SIZE as u16,
                 range_array_len: 0,
-                key_count: 0,
+                lower_fence: 0,
+                upper_fence: 0,
+                prefix_len: 0,
+                upper: ptr::null_mut(),
             },
             data: ArtNodeData {
                 _bytes: unsafe { std::mem::zeroed() },
@@ -340,7 +356,10 @@ pub fn test_tree() {
         };
         dbg!(PAGE_SIZE - node.head.data_write as usize);
         node.push_range_array_entry(0).unwrap();
-        let root_node = node.construct(&keys, 0..keys.len(), 0).unwrap();
+        let root_node = node.construct(&|_node: &ArtNode, i| unsafe {
+            // key must live for _node
+            std::mem::transmute::<PrefixTruncatedKey<'_>, PrefixTruncatedKey<'static>>(keys[i])
+        }, 0..keys.len(), 0).unwrap();
         let test_key = |k: PrefixTruncatedKey| {
             unsafe {
                 let found = node.find_key_range(k.0, root_node);
@@ -359,5 +378,121 @@ pub fn test_tree() {
             let k = gen_key();
             test_key(PrefixTruncatedKey(&k));
         }
+    }
+}
+
+unsafe impl Node for ArtNode {
+    fn is_underfull(&self) -> bool {
+        self.free_space() > PAGE_SIZE * 3 / 4
+    }
+
+    fn print(&self) {
+        println!("{:#?}", self)
+    }
+
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        todo!()
+    }
+
+    fn split_node(&mut self, parent: &mut dyn InnerNode, index_in_parent: usize, key_in_node: &[u8]) -> Result<(), ()> {
+        todo!()
+    }
+}
+
+impl InnerNode for ArtNode {
+    fn merge_children_check(&mut self, child_index: usize) -> Result<(), ()> {
+        todo!()
+    }
+
+    unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
+        todo!()
+    }
+
+    fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
+        todo!()
+    }
+
+    fn find_child_index(&self, key: &[u8]) -> usize {
+        todo!()
+    }
+}
+
+unsafe impl InnerConversionSink for ArtNode {
+    fn create(dst: &mut BTreeNode, src: &(impl InnerConversionSource + ?Sized)) -> Result<(), ()> {
+        let key_count = src.key_count();
+        let piv_space = key_count * size_of::<PageIndirectionVectorEntry>();
+        let this = dst.write_inner(ArtNode {
+            head: ArtNodeHead {
+                tag: BTreeNodeTag::ArtInner,
+                data_write: PAGE_SIZE as u16,
+                range_array_len: 0,
+                upper: src.get_child(key_count),
+                key_count: 0,
+                lower_fence: 0,
+                upper_fence: 0,
+                prefix_len: 0,
+            },
+            data: ArtNodeData {
+                _bytes: unsafe { std::mem::zeroed() },
+            },
+        });
+        let fences = src.fences();
+        this.head.upper_fence = this.heap_write(fences.upper_fence.0)? as u16;
+        this.head.lower_fence = this.heap_write(fences.lower_fence.0)? as u16;
+        this.head.prefix_len = fences.prefix_len as u16;
+        let mut key_entries = SmallVec::<[PageIndirectionVectorEntry; 256]>::new();
+        for ki in 0..key_count {
+            this.heap_write((src.get_child(ki) as usize).to_ne_bytes().as_slice())?;
+            let data_write = this.head.data_write as usize;
+            let written = src.get_key(ki, unsafe { &mut reinterpret_mut::<Self, [u8; PAGE_SIZE]>(this)[size_of::<ArtNodeHead>()..data_write] }, 0)?;
+            this.head.data_write -= written as u16;
+            key_entries.push(PageIndirectionVectorEntry {
+                key_len: written as u16,
+                key_offset: (data_write - written) as u16,
+            });
+        }
+        this.push_range_array_entry(0)?;
+        this.construct(&|node, index| {
+            let s = key_entries[index];
+            PrefixTruncatedKey(unsafe {
+                &reinterpret::<Self, [u8; PAGE_SIZE]>(node)[s.key_offset as usize..][..s.key_len as usize]
+            })
+        }, 0..key_count, 0)?;
+        let indirection_vector_offset = Self::layout(this.head.range_array_len as usize).page_indirection_vector as usize;
+        unsafe {
+            let piv = (this as *mut Self as *mut u8).offset(indirection_vector_offset as isize) as *mut PageIndirectionVectorEntry;
+            if this.free_space() < piv_space {
+                return Err(());
+            }
+            std::slice::from_raw_parts_mut(piv, key_entries.len()).copy_from_slice(&key_entries[..]);
+        }
+        this.head.key_count = key_count as u16;
+        Ok(())
+    }
+}
+
+impl InnerConversionSource for ArtNode {
+    fn fences(&self) -> FenceData {
+        todo!()
+    }
+
+    fn key_count(&self) -> usize {
+        todo!()
+    }
+
+    fn get_child(&self, index: usize) -> *mut BTreeNode {
+        todo!()
+    }
+
+    fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+        todo!()
+    }
+
+    fn get_key_length_sum(&self, range: Range<usize>) -> usize {
+        todo!()
+    }
+
+    fn get_key_length_max(&self, range: Range<usize>) -> usize {
+        todo!()
     }
 }
