@@ -6,6 +6,7 @@ use std::ops::{Deref, DerefMut};
 use crate::basic_node::BasicNode;
 use crate::BTreeNode;
 use std::ptr::DynMetadata;
+use crate::art_node::ArtNode;
 use crate::hash_leaf::HashLeaf;
 use crate::head_node::{AsciiHeadNode, U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 
@@ -45,7 +46,7 @@ pub fn init_vtables() {
     make_inner_vtables::<U32ZeroPaddedHeadNode>(BTreeNodeTag::U32ZeroPaddedHead);
     make_inner_vtables::<U64ZeroPaddedHeadNode>(BTreeNodeTag::U64ZeroPaddedHead);
     make_inner_vtables::<AsciiHeadNode>(BTreeNodeTag::AsciiHead);
-    make_inner_vtables::<AsciiHeadNode>(BTreeNodeTag::ArtInner);
+    make_inner_vtables::<ArtNode>(BTreeNodeTag::ArtInner);
 }
 
 #[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, Eq, PartialEq, Hash)]
