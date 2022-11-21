@@ -12,6 +12,7 @@ use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversio
 use crate::util::{common_prefix_len, get_key_from_slice, reinterpret, reinterpret_mut};
 use crate::vtables::BTreeNodeTag;
 
+#[repr(C)]
 pub struct ArtNode {
     head: ArtNodeHead,
     data: ArtNodeData,
@@ -23,6 +24,7 @@ union ArtNodeData {
 }
 
 #[derive(Debug)]
+#[repr(C)]
 struct ArtNodeHead {
     tag: BTreeNodeTag,
     key_count: u16,
