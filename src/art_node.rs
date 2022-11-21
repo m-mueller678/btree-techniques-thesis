@@ -201,6 +201,7 @@ impl ArtNode {
         }
         let key_count = children.len() - 1;
         let key_array_size = key_count.next_multiple_of(2);
+        self.set_heap_write_pos_mod_2(0)?;
         let pos = self.heap_alloc(size_of::<u16>() * 2 + key_array_size + size_of::<u16>() * children.len())? as usize;
         unsafe {
             self.write_to(pos, NODE_TAG_DECISION.to_ne_bytes().as_slice());
