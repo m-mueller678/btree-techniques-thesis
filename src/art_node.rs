@@ -471,7 +471,7 @@ impl InnerNode for ArtNode {
         unsafe {
             let key = &key[self.head.prefix_len as usize..];
             let range_index = self.find_key_range(key, self.head.root_node) as usize;
-            let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index - 1] as usize;
+            let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
             let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&key, |e: &PageIndirectionVectorEntry| {
                 &reinterpret::<Self, [u8; PAGE_SIZE]>(self)[e.key_offset as usize..][..e.key_len as usize]
             }) {
