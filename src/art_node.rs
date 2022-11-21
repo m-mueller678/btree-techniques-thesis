@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
 use crate::find_separator::find_separator;
 use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
-use crate::util::{common_prefix_len, get_key_from_slice, reinterpret, reinterpret_mut};
+use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, reinterpret_mut, SmallBuff};
 use crate::vtables::BTreeNodeTag;
 
 #[repr(C)]
@@ -44,6 +44,14 @@ struct LayoutInfo {
 struct PageIndirectionVectorEntry {
     key_offset: u16,
     key_len: u16,
+}
+
+impl PageIndirectionVectorEntry {
+    fn key<'a>(&self, page: &'a ArtNode) -> PrefixTruncatedKey<'a> {
+        unsafe {
+            PrefixTruncatedKey(&reinterpret::<ArtNode, [u8; PAGE_SIZE]>(page)[self.key_offset as usize..][..self.key_len as usize])
+        }
+    }
 }
 
 const NODE_REF_IS_RANGE: u16 = 1 << 15;
@@ -256,6 +264,7 @@ impl ArtNode {
         }
     }
 
+    /// overwrites page indirection vector
     fn push_range_array_entry(&mut self, index: u16) -> Result<u16, ()> {
         if self.free_space() < 2 {
             return Err(());
@@ -416,8 +425,19 @@ unsafe impl Node for ArtNode {
         println!("{:#?}", self)
     }
 
-    fn validate_tree(&self, _lower: &[u8], _upper: &[u8]) {
-        todo!()
+    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+        debug_assert_eq!(self.fences(), FenceData {
+            prefix_len: 0,
+            lower_fence: FenceRef(lower),
+            upper_fence: FenceRef(upper),
+        }.restrip());
+        let mut current_lower: SmallBuff = lower.into();
+        for (i, e) in self.page_indirection_vector().iter().enumerate() {
+            let current_upper = partial_restore(0, &[&lower[..self.head.prefix_len as usize], e.key(self).0], 0);
+            unsafe { &mut *self.get_child(i) }.validate_tree(&current_lower, &current_upper);
+            current_lower = current_upper;
+        }
+        unsafe { &mut *self.get_child(self.head.key_count as usize) }.validate_tree(&current_lower, upper);
     }
 
     fn split_node(&mut self, parent: &mut dyn InnerNode, index_in_parent: usize, key_in_node: &[u8]) -> Result<(), ()> {
@@ -467,11 +487,11 @@ impl InnerNode for ArtNode {
 
     fn find_child_index(&self, key: &[u8]) -> usize {
         unsafe {
-            let key = &key[self.head.prefix_len as usize..];
-            let range_index = self.find_key_range(key, self.head.root_node) as usize;
+            let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
+            let range_index = self.find_key_range(key.0, self.head.root_node) as usize;
             let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
             let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&key, |e: &PageIndirectionVectorEntry| {
-                &reinterpret::<Self, [u8; PAGE_SIZE]>(self)[e.key_offset as usize..][..e.key_len as usize]
+                e.key(self)
             }) {
                 Ok(i) | Err(i) => i
             };
@@ -515,6 +535,7 @@ unsafe impl InnerConversionSink for ArtNode {
                 key_offset: (data_write - written) as u16,
             });
         }
+        this.head.key_count = key_count as u16;
         this.push_range_array_entry(0)?;
         this.head.root_node = this.construct(&|node, index| {
             let s = key_entries[index];
@@ -530,7 +551,6 @@ unsafe impl InnerConversionSink for ArtNode {
             }
             std::slice::from_raw_parts_mut(piv, key_entries.len()).copy_from_slice(&key_entries[..]);
         }
-        this.head.key_count = key_count as u16;
         Ok(())
     }
 }
@@ -563,10 +583,7 @@ impl InnerConversionSource for ArtNode {
     }
 
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
-        let entry = self.piv_entry(index);
-        unsafe {
-            get_key_from_slice(PrefixTruncatedKey(&reinterpret::<Self, [u8; PAGE_SIZE]>(self)[entry.key_offset as usize..][..entry.key_len as usize]), dst, strip_prefix)
-        }
+        get_key_from_slice(self.piv_entry(index).key(self), dst, strip_prefix)
     }
 
     fn get_key_length_sum(&self, _range: Range<usize>) -> usize {
