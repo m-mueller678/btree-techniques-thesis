@@ -279,6 +279,14 @@ impl ArtNode {
         }
     }
 
+    fn range_array_mut(&mut self) -> &mut [u16] {
+        unsafe {
+            let offset = Self::layout(self.head.range_array_len as usize).range_array;
+            let ptr = reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self).as_ptr().offset(offset as isize) as *mut u16;
+            std::slice::from_raw_parts_mut(ptr, self.head.range_array_len as usize)
+        }
+    }
+
     fn piv_entry(&self, index: usize) -> &PageIndirectionVectorEntry {
         debug_assert!(index < self.head.key_count as usize);
         unsafe {
@@ -442,6 +450,11 @@ impl InnerNode for ArtNode {
             key_len: key.0.len() as u16,
         };
         self.head.key_count = new_key_count as u16;
+        for r in self.range_array_mut().iter_mut().skip(1) {
+            if *r >= index as u16 {
+                *r += 1;
+            }
+        }
         Ok(())
     }
 
