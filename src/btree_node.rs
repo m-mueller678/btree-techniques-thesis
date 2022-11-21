@@ -7,11 +7,14 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use crate::art_node::ArtNode;
 use crate::head_node;
 use crate::vtables::BTreeNodeTag;
 
 #[cfg(feature = "inner_basic")]
 pub type DefaultInnerNodeConversionSink = BasicNode;
+#[cfg(feature = "inner_art")]
+pub type DefaultInnerNodeConversionSink = ArtNode;
 #[cfg(feature = "inner_padded")]
 pub type DefaultInnerNodeConversionSink = FallbackInnerConversionSink<FallbackInnerConversionSink<head_node::U32ZeroPaddedHeadNode, head_node::U64ZeroPaddedHeadNode>, BasicNode>;
 #[cfg(feature = "inner_explicit_length")]
@@ -32,6 +35,7 @@ pub union BTreeNode {
     pub basic: BasicNode,
     pub hash_leaf: ManuallyDrop<HashLeaf>,
     pub uninit: (),
+    pub art_node: ManuallyDrop<ArtNode>,
 }
 
 impl BTreeNode {

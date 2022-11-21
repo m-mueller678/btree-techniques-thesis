@@ -6,8 +6,10 @@ use std::ops::Range;
 use std::ptr;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
-use crate::inner_node::{FenceData, InnerConversionSink, InnerConversionSource, InnerNode, Node};
-use crate::util::{common_prefix_len, reinterpret, reinterpret_mut};
+use crate::basic_node::BasicNode;
+use crate::find_separator::find_separator;
+use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, Node, SeparableInnerConversionSource, split_in_place};
+use crate::util::{common_prefix_len, get_key_from_slice, reinterpret, reinterpret_mut};
 use crate::vtables::BTreeNodeTag;
 
 pub struct ArtNode {
@@ -30,6 +32,7 @@ struct ArtNodeHead {
     upper_fence: u16,
     lower_fence: u16,
     prefix_len: u16,
+    root_node: u16,
 }
 
 struct LayoutInfo {
@@ -75,7 +78,6 @@ impl ArtNode {
     }
 
     fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
-        debug_assert!(key_range.len() > 0);
         let mut full_prefix = prefix_len;
         let initial_range_start = key_range.start;
         if key_range.len() < 3 {
@@ -274,6 +276,21 @@ impl ArtNode {
             std::slice::from_raw_parts(ptr, self.head.range_array_len as usize)
         }
     }
+
+    fn piv_entry(&self, index: usize) -> &PageIndirectionVectorEntry {
+        debug_assert!(index < self.head.key_count as usize);
+        unsafe {
+            &*((self as *const Self as *const u8).offset(Self::layout(self.head.range_array_len as usize).page_indirection_vector as isize) as *const PageIndirectionVectorEntry)
+                .offset(index as isize)
+        }
+    }
+
+    fn page_indirection_vector(&self) -> &[PageIndirectionVectorEntry] {
+        unsafe {
+            let ptr = (self as *const Self as *const u8).offset(Self::layout(self.head.range_array_len as usize).page_indirection_vector as isize) as *const PageIndirectionVectorEntry;
+            std::slice::from_raw_parts(ptr, self.key_count())
+        }
+    }
 }
 
 struct NodeDebugWrapper<'a> {
@@ -320,7 +337,7 @@ pub fn test_tree() {
     let insert_count = 100;
     let lookup_count = 200;
 
-    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
+    let rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0x1234567890abcdef);
     for (iteration, mut rng) in std::iter::successors(Some(rng), |rng| {
         let mut r = rng.clone();
         r.jump();
@@ -349,6 +366,7 @@ pub fn test_tree() {
                 upper_fence: 0,
                 prefix_len: 0,
                 upper: ptr::null_mut(),
+                root_node: 0,
             },
             data: ArtNodeData {
                 _bytes: unsafe { std::mem::zeroed() },
@@ -395,25 +413,56 @@ unsafe impl Node for ArtNode {
     }
 
     fn split_node(&mut self, parent: &mut dyn InnerNode, index_in_parent: usize, key_in_node: &[u8]) -> Result<(), ()> {
-        todo!()
+        unsafe {
+            split_in_place::<Self, Self, Self>(reinterpret_mut::<Self, BTreeNode>(self), parent, index_in_parent, key_in_node)
+        }
     }
 }
 
 impl InnerNode for ArtNode {
     fn merge_children_check(&mut self, child_index: usize) -> Result<(), ()> {
-        todo!()
+        //TODO
+        return Err(());
     }
 
     unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
-        todo!()
+        self.heap_write((child as usize).to_ne_bytes().as_slice())?;
+        let key_offfset = self.heap_write(key.0)?;
+        if self.free_space() < size_of::<PageIndirectionVectorEntry>() {
+            return Err(());
+        }
+        let piv_ptr = (self as *mut Self as *mut u8).offset(Self::layout(self.head.range_array_len as usize).page_indirection_vector as isize) as *mut PageIndirectionVectorEntry;
+        let new_key_count = self.head.key_count as usize + 1;
+        let extended_piv = std::slice::from_raw_parts_mut(piv_ptr, new_key_count);
+        extended_piv.copy_within(index..new_key_count - 1, index + 1);
+        extended_piv[index] = PageIndirectionVectorEntry {
+            key_offset: key_offfset as u16,
+            key_len: key.0.len() as u16,
+        };
+        Ok(())
     }
 
     fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()> {
-        todo!()
+        let size = size_of::<PageIndirectionVectorEntry>() + size_of::<usize>() + key_length;
+        if self.free_space() >= size {
+            Ok(self.head.prefix_len as usize)
+        } else {
+            Err(())
+        }
     }
 
     fn find_child_index(&self, key: &[u8]) -> usize {
-        todo!()
+        unsafe {
+            let key = &key[self.head.prefix_len as usize..];
+            let range_index = self.find_key_range(key, self.head.root_node) as usize;
+            let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index - 1] as usize;
+            let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&key, |e: &PageIndirectionVectorEntry| {
+                &reinterpret::<Self, [u8; PAGE_SIZE]>(self)[e.key_offset as usize..][..e.key_len as usize]
+            }) {
+                Ok(i) | Err(i) => i
+            };
+            index
+        }
     }
 }
 
@@ -431,6 +480,7 @@ unsafe impl InnerConversionSink for ArtNode {
                 lower_fence: 0,
                 upper_fence: 0,
                 prefix_len: 0,
+                root_node: 0,
             },
             data: ArtNodeData {
                 _bytes: unsafe { std::mem::zeroed() },
@@ -473,26 +523,58 @@ unsafe impl InnerConversionSink for ArtNode {
 
 impl InnerConversionSource for ArtNode {
     fn fences(&self) -> FenceData {
-        todo!()
+        unsafe {
+            FenceData {
+                prefix_len: self.head.prefix_len as usize,
+                lower_fence: FenceRef(&reinterpret::<Self, [u8; PAGE_SIZE]>(self)[self.head.lower_fence as usize..self.head.upper_fence as usize]),
+                upper_fence: FenceRef(&reinterpret::<Self, [u8; PAGE_SIZE]>(self)[self.head.upper_fence as usize..]),
+            }
+        }
     }
 
     fn key_count(&self) -> usize {
-        todo!()
+        self.head.key_count as usize
     }
 
     fn get_child(&self, index: usize) -> *mut BTreeNode {
-        todo!()
+        if index < self.head.key_count as usize {
+            let entry = self.piv_entry(index);
+            unsafe {
+                ((self as *const Self as *const u8).offset((entry.key_offset + entry.key_len) as isize) as *const *mut BTreeNode).read_unaligned()
+            }
+        } else {
+            debug_assert!(index == self.head.key_count as usize);
+            self.head.upper
+        }
     }
 
     fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
-        todo!()
+        let entry = self.piv_entry(index);
+        unsafe {
+            get_key_from_slice(PrefixTruncatedKey(&reinterpret::<Self, [u8; PAGE_SIZE]>(self)[entry.key_offset as usize..][..entry.key_len as usize]), dst, strip_prefix)
+        }
     }
 
-    fn get_key_length_sum(&self, range: Range<usize>) -> usize {
-        todo!()
+    fn get_key_length_sum(&self, _range: Range<usize>) -> usize {
+        unimplemented!()
     }
 
-    fn get_key_length_max(&self, range: Range<usize>) -> usize {
-        todo!()
+    fn get_key_length_max(&self, _range: Range<usize>) -> usize {
+        unimplemented!()
+    }
+}
+
+impl SeparableInnerConversionSource for ArtNode {
+    type Separator<'a> = PrefixTruncatedKey<'a>;
+
+    fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>) {
+        find_separator(
+            self.head.key_count as usize,
+            self.head.tag.is_leaf(),
+            |i: usize| {
+                let e = self.page_indirection_vector()[i];
+                PrefixTruncatedKey(unsafe { &reinterpret::<Self, [u8; PAGE_SIZE]>(self)[e.key_offset as usize..][..e.key_len as usize] })
+            },
+        )
     }
 }
