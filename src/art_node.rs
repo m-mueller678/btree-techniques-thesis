@@ -441,6 +441,7 @@ impl InnerNode for ArtNode {
             key_offset: key_offfset as u16,
             key_len: key.0.len() as u16,
         };
+        self.head.key_count = new_key_count as u16;
         Ok(())
     }
 
@@ -504,7 +505,7 @@ unsafe impl InnerConversionSink for ArtNode {
             });
         }
         this.push_range_array_entry(0)?;
-        this.construct(&|node, index| {
+        this.head.root_node = this.construct(&|node, index| {
             let s = key_entries[index];
             PrefixTruncatedKey(unsafe {
                 &reinterpret::<Self, [u8; PAGE_SIZE]>(node)[s.key_offset as usize..][..s.key_len as usize]

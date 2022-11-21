@@ -701,6 +701,11 @@ impl InnerNode for BasicNode {
 
 impl LeafNode for BasicNode {
     fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
+        if cfg!(feature="strip-prefix_false") {
+            assert!(key <= self.fences().upper_fence.0 || self.fences().upper_fence.0.is_empty());
+            assert!(key > self.fences().lower_fence.0 || self.fences().lower_fence.0.is_empty());
+        }
+
         self.request_space(self.space_needed(key.len(), payload.len()))?;
         let key = self.truncate(key);
         let (slot_id, found) = self.lower_bound(key);
