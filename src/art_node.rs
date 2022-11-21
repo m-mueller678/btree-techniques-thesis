@@ -1,14 +1,12 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
-use std::io::{Write};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
 use std::ptr;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
-use crate::basic_node::BasicNode;
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, Node, SeparableInnerConversionSource, split_in_place};
+use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{common_prefix_len, get_key_from_slice, reinterpret, reinterpret_mut};
 use crate::vtables::BTreeNodeTag;
 
@@ -81,7 +79,6 @@ impl ArtNode {
 
     fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         let mut full_prefix = prefix_len;
-        let initial_range_start = key_range.start;
         if key_range.len() < 3 {
             return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
         }
@@ -100,7 +97,7 @@ impl ArtNode {
         }
         let ret = if full_prefix > prefix_len {
             self.push_range_array_entry(key_range.start as u16)?;
-            let child = self.construct_inner_decision_node::<F>(&keys, key_range.clone(), full_prefix)?;
+            self.construct_inner_decision_node::<F>(&keys, key_range.clone(), full_prefix)?;
             self.push_range_array_entry(key_range.end as u16)?;
             let span_len = full_prefix - prefix_len;
             self.set_heap_write_pos_mod_2(span_len as u16)?;
@@ -419,7 +416,7 @@ unsafe impl Node for ArtNode {
         println!("{:#?}", self)
     }
 
-    fn validate_tree(&self, lower: &[u8], upper: &[u8]) {
+    fn validate_tree(&self, _lower: &[u8], _upper: &[u8]) {
         todo!()
     }
 
@@ -431,7 +428,7 @@ unsafe impl Node for ArtNode {
 }
 
 impl InnerNode for ArtNode {
-    fn merge_children_check(&mut self, child_index: usize) -> Result<(), ()> {
+    fn merge_children_check(&mut self, _child_index: usize) -> Result<(), ()> {
         //TODO
         return Err(());
     }
