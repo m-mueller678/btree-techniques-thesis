@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/out-new-inline-prefix-strip-$(date '+%Y-%m-%d-%H-%M-%S').csv"
+OUT="$HOME/hash-functions-$(date '+%Y-%m-%d-%H-%M-%S').csv"
 touch $OUT
 
 cd ~/cp-target

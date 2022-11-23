@@ -17,6 +17,7 @@ FEATURES = {
     "hash-leaf-simd": ["32"],
     # "strip-prefix": ["true", "false"],
     "strip-prefix": ["false"],
+    "hash": ["wyhash", "fx", "crc32"],
 }
 
 def configure(chosen_features, revision=None):
@@ -90,7 +91,6 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-configure(default_features())
-# dir = build_all(all_feature_combinations())
-# upload(dir)
-#print_uploaded()
+dir = build_all(all_feature_combinations())
+upload(dir)
+print_uploaded()

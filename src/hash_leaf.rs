@@ -187,10 +187,23 @@ impl HashLeaf {
         self.validate();
     }
 
+    #[cfg(feature = "hash_fx")]
     fn compute_hash(key: PrefixTruncatedKey) -> u8 {
         let mut hasher = FxHasher::default();
         hasher.write(key.0);
         (hasher.finish() >> 56) as u8
+    }
+
+    #[cfg(feature = "hash_wyhash")]
+    fn compute_hash(key: PrefixTruncatedKey) -> u8 {
+        let mut hasher = wyhash::WyHash::default();
+        hasher.write(key.0);
+        hasher.finish() as u8
+    }
+
+    #[cfg(feature = "hash_crc32")]
+    fn compute_hash(key: PrefixTruncatedKey) -> u8 {
+        crc32fast::hash(key.0) as u8
     }
 
     fn store_key_value(
