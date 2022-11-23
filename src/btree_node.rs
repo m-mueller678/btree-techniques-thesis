@@ -7,9 +7,11 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
 use crate::head_node;
 use crate::vtables::BTreeNodeTag;
+
 
 #[cfg(feature = "inner_basic")]
 pub type DefaultInnerNodeConversionSink = BasicNode;
@@ -66,6 +68,17 @@ impl BTreeNode {
         while self.tag().is_inner() && !filter(self) {
             index = self.to_inner().find_child_index(key);
             parent = self;
+            if cfg!(feature = "descend-adapt-inner_100") {
+                if infrequent(1000) {
+                    adapt_inner(self);
+                }
+            } else if cfg!(feature = "descend-adapt-inner_1000") {
+                if infrequent(1000) {
+                    adapt_inner(self);
+                }
+            } else {
+                assert!(cfg!(feature = "descend-adapt-inner_none"))
+            }
             self = unsafe { &mut *self.to_inner().get_child(index) };
         }
         (self, parent, index)

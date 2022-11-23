@@ -8,6 +8,7 @@ use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
 use std::ops::Range;
+use crate::adaptive::{adapt_inner, infrequent};
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -695,7 +696,8 @@ impl InnerNode for BasicNode {
     }
 
     fn find_child_index(&self, key: &[u8]) -> usize {
-        self.lower_bound(self.truncate(key)).0
+        let index = self.lower_bound(self.truncate(key)).0;
+        index
     }
 }
 

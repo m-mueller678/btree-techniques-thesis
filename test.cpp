@@ -46,8 +46,6 @@ void runTest(BenchmarkParameters parameters, vector<string> &data) {
         }
     }
 
-    return;
-
     // prefix lookup
     for (uint64_t i = 0; i < count; i++)
         t.lookup((uint8_t *) data[i].data(), data[i].size() - (data[i].size() / 4));
