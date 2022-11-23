@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
-use std::ptr;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
 use crate::find_separator::find_separator;

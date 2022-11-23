@@ -26,6 +26,7 @@ pub mod util;
 mod vtables;
 pub mod node_stats;
 pub mod art_node;
+pub mod adaptive;
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();

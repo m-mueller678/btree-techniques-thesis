@@ -2,8 +2,6 @@ use crate::find_separator::find_separator;
 use crate::inner_node::{FenceData, FenceRef, InnerNode, LeafNode, Node};
 use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
-use rustc_hash::FxHasher;
-use std::hash::Hasher;
 use std::io::Write;
 use std::mem::{align_of, ManuallyDrop, size_of, transmute};
 use std::simd::SimdPartialEq;
@@ -189,6 +187,8 @@ impl HashLeaf {
 
     #[cfg(feature = "hash_fx")]
     fn compute_hash(key: PrefixTruncatedKey) -> u8 {
+        use std::hash::Hasher;
+        use rustc_hash::FxHasher;
         let mut hasher = FxHasher::default();
         hasher.write(key.0);
         (hasher.finish() >> 56) as u8
@@ -196,6 +196,7 @@ impl HashLeaf {
 
     #[cfg(feature = "hash_wyhash")]
     fn compute_hash(key: PrefixTruncatedKey) -> u8 {
+        use std::hash::Hasher;
         let mut hasher = wyhash::WyHash::default();
         hasher.write(key.0);
         hasher.finish() as u8

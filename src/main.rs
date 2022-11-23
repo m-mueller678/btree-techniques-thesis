@@ -1,7 +1,7 @@
 #![feature(is_sorted)]
 
 
-use btree::{art_node, PrefixTruncatedKey};
+use btree::{PrefixTruncatedKey};
 
 
 use std::hint::black_box;
@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use btree::head_node::{AsciiHead, FullKeyHead};
 
 
-fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
+pub fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     let mut buffer = [0u8; 1 << 9];
     let mut keys = SmallVec::<[(&[u8], H, bool); 1024]>::new();
     let mut offset = 0;
@@ -61,7 +61,7 @@ fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     }
 }
 
-fn test_thread(id: usize) {
+pub fn test_thread(id: usize) {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     let mut rng = Xoshiro128PlusPlus::seed_from_u64(0x33445566778899aa);
@@ -81,7 +81,7 @@ fn test_thread(id: usize) {
     }
 }
 
-fn perf<H: FullKeyHead>() {
+pub fn perf<H: FullKeyHead>() {
     let mut rng = Xoshiro128PlusPlus::seed_from_u64(0x33445566778899aa);
     let mut buffer = vec![0u8; 1 << 16];
     let mut lens = Vec::new();
@@ -110,6 +110,4 @@ fn perf<H: FullKeyHead>() {
     println!("{},{},{}", duration_acc.as_nanos() as f64 / count_acc as f64, cfg!(feature = "use-full-length_true"), std::any::type_name::<H>())
 }
 
-fn main() {
-    art_node::test_tree();
-}
+fn main() {}
