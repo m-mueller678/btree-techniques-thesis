@@ -19,7 +19,7 @@ FEATURES = {
     "strip-prefix": ["false"],
     # "hash": ["crc32","wyhash", "fx"],
     "hash": ["crc32"],
-    "descend-adapt-inner": ["1000", "100", "none"],
+    "descend-adapt-inner": ["1000", "100", "10", "none"],
 }
 
 def configure(chosen_features, revision=None):

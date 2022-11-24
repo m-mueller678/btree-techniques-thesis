@@ -106,6 +106,7 @@ impl BTree {
             }
             debug_assert!((*node).is_underfull());
             if (*parent).to_inner_mut().merge_children_check(index).is_ok() && (*parent).is_underfull() {
+                (&mut *parent).adaption_state().set_adapted(false);
                 self.validate();
                 merge_target = parent;
                 continue;

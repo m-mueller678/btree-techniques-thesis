@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use rand::{SeedableRng, thread_rng};
+use rand::{SeedableRng};
 use crate::BTreeNode;
 use crate::head_node::{U32ExplicitHeadNode, U64ExplicitHeadNode};
 use crate::inner_node::{InnerConversionSink};
@@ -12,7 +12,6 @@ static mut RAND: Lazy<SmallRng> = Lazy::new(|| SmallRng::from_entropy());
 #[inline]
 pub fn infrequent(infrequency: u32) -> bool {
     let distribution = rand::distributions::Bernoulli::from_ratio(1, infrequency).unwrap();
-    debug_assert!(std::thread::current().name() == Some("main"));
     distribution.sample(unsafe { &mut *RAND })
 }
 

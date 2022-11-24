@@ -391,6 +391,7 @@ pub fn split_in_place<
                 PrefixTruncatedKey(&restored_separator),
                 left,
             )?;
+            (&mut *((parent as *mut (dyn InnerNode) as *mut BTreeNode))).adaption_state().set_adapted(false);
         }
         ptr::write(node, right);
         Ok(())

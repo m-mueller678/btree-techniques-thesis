@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/adaptive-inner-small-rng-$(date '+%Y-%m-%d-%H-%M-%S').csv"
+OUT="$HOME/adaptive-inner-tracked-$(date '+%Y-%m-%d-%H-%M-%S').csv"
 touch $OUT
 
 cd ~/cp-target

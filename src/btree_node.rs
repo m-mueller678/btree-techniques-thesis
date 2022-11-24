@@ -10,6 +10,7 @@ use std::ops::Range;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
 use crate::head_node;
+use crate::util::reinterpret_mut;
 use crate::vtables::BTreeNodeTag;
 
 
@@ -40,6 +41,31 @@ pub union BTreeNode {
     pub art_node: ManuallyDrop<ArtNode>,
 }
 
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct BTreeNodeHead {
+    pub tag: BTreeNodeTag,
+    pub adaption_state: AdaptionState,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
+pub struct AdaptionState(u8);
+
+impl AdaptionState {
+    pub fn new() -> Self {
+        AdaptionState(0)
+    }
+
+    pub fn set_adapted(&mut self, a: bool) {
+        self.0 = a as u8;
+    }
+
+    pub fn is_adapted(&self) -> bool {
+        self.0 != 0
+    }
+}
+
 impl BTreeNode {
     pub fn write_inner<N: InnerConversionSink>(&mut self, src: N) -> &mut N {
         unsafe {
@@ -57,6 +83,10 @@ impl BTreeNode {
         BTreeNodeTag::try_from_primitive(unsafe { self.raw_bytes[0] }).unwrap()
     }
 
+    pub fn adaption_state(&mut self) -> &mut AdaptionState {
+        unsafe { reinterpret_mut::<u8, AdaptionState>(&mut self.raw_bytes[1]) }
+    }
+
     /// descends to target node, returns target node, parent, and index within parent
     pub fn descend(
         mut self: &mut Self,
@@ -68,13 +98,20 @@ impl BTreeNode {
         while self.tag().is_inner() && !filter(self) {
             index = self.to_inner().find_child_index(key);
             parent = self;
-            if cfg!(feature = "descend-adapt-inner_100") {
-                if infrequent(1000) {
+            if cfg!(feature = "descend-adapt-inner_10") {
+                if !self.adaption_state().is_adapted() && infrequent(10) {
                     adapt_inner(self);
+                    self.adaption_state().set_adapted(true);
+                }
+            } else if cfg!(feature = "descend-adapt-inner_100") {
+                if !self.adaption_state().is_adapted() && infrequent(100) {
+                    adapt_inner(self);
+                    self.adaption_state().set_adapted(true);
                 }
             } else if cfg!(feature = "descend-adapt-inner_1000") {
-                if infrequent(1000) {
+                if !self.adaption_state().is_adapted() && infrequent(1000) {
                     adapt_inner(self);
+                    self.adaption_state().set_adapted(true);
                 }
             } else {
                 assert!(cfg!(feature = "descend-adapt-inner_none"))

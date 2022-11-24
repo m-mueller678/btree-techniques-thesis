@@ -12,6 +12,7 @@ use std::mem::{align_of, size_of, transmute};
 use std::{mem, ptr};
 use std::ops::Range;
 use bytemuck::{bytes_of, bytes_of_mut, Pod};
+use crate::btree_node::{AdaptionState, BTreeNodeHead};
 use crate::vtables::BTreeNodeTag;
 
 pub type U64ExplicitHeadNode = HeadNode<ExplicitLengthHead<u64>>;
@@ -324,7 +325,7 @@ pub struct HeadNode<Head> {
 #[repr(C)]
 #[derive(Debug)]
 pub struct HeadNodeHead {
-    tag: BTreeNodeTag,
+    head: BTreeNodeHead,
     key_count: u16,
     key_capacity: u16,
     child_offset: u16,
@@ -344,7 +345,7 @@ impl<Head: FullKeyHead> HeadNode<Head> {
     fn from_fences(f: FenceData) -> Self {
         let mut this = HeadNode {
             head: HeadNodeHead {
-                tag: Head::TAG,
+                head: BTreeNodeHead { tag: Head::TAG, adaption_state: AdaptionState::new() },
                 key_count: 0,
                 key_capacity: 0,
                 child_offset: 0,

@@ -1,4 +1,4 @@
-use crate::btree_node::{BTreeNode, PAGE_SIZE};
+use crate::btree_node::{AdaptionState, BTreeNode, BTreeNodeHead, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
 use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
@@ -8,7 +8,6 @@ use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
 use std::ops::Range;
-use crate::adaptive::{adapt_inner, infrequent};
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -46,7 +45,7 @@ const HINT_COUNT: usize = 16;
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct BasicNodeHead {
-    tag: BTreeNodeTag,
+    head: BTreeNodeHead,
     /// only used in inner nodes, points to last child
     upper: *mut BTreeNode,
     lower_fence: FenceKeySlot,
@@ -76,10 +75,13 @@ impl BasicNode {
     fn new(leaf: bool) -> Self {
         BasicNode {
             head: BasicNodeHead {
-                tag: if leaf {
-                    BTreeNodeTag::BasicLeaf
-                } else {
-                    BTreeNodeTag::BasicInner
+                head: BTreeNodeHead {
+                    tag: if leaf {
+                        BTreeNodeTag::BasicLeaf
+                    } else {
+                        BTreeNodeTag::BasicInner
+                    },
+                    adaption_state: AdaptionState::new(),
                 },
                 upper: ptr::null_mut(),
                 lower_fence: FenceKeySlot { offset: 0, len: 0 },
@@ -241,7 +243,7 @@ impl BasicNode {
 
     fn compactify(&mut self) {
         let should = self.free_space_after_compaction();
-        let mut tmp = Self::new(self.head.tag.is_leaf());
+        let mut tmp = Self::new(self.head.head.tag.is_leaf());
         tmp.set_fences(self.fences());
         self.copy_key_value_range(self.slots(), &mut tmp, FatTruncatedKey::full(&[]));
         tmp.head.upper = self.head.upper;
@@ -398,8 +400,8 @@ impl BasicNode {
         right_any: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
-        if self.head.tag.is_leaf() {
-            debug_assert!(right_any.tag() == self.head.tag);
+        if self.head.head.tag.is_leaf() {
+            debug_assert!(right_any.tag() == self.head.head.tag);
         } else {
             unsafe {
                 let mut dst = BTreeNode::new_uninit();
@@ -431,7 +433,7 @@ impl BasicNode {
         if space_upper_bound > PAGE_SIZE {
             return Err(());
         }
-        let mut tmp = BasicNode::new(self.head.tag.is_leaf());
+        let mut tmp = BasicNode::new(self.head.head.tag.is_leaf());
         tmp.head.upper = right.head.upper;
         let merge_fences = MergeFences::new(self.fences(), separator, right.fences());
         tmp.set_fences(merge_fences.fences());
@@ -509,7 +511,7 @@ unsafe impl Node for BasicNode {
         index_in_parent: usize,
         key_in_node: &[u8],
     ) -> Result<(), ()> {
-        if self.head.tag.is_inner() {
+        if self.head.head.tag.is_inner() {
             type Dst = crate::btree_node::DefaultInnerNodeConversionSink;
             return split_in_place::<BasicNode, Dst, Dst>(
                 unsafe { reinterpret_mut(self) },
@@ -526,10 +528,10 @@ unsafe impl Node for BasicNode {
         let node_left_raw;
         let node_left = unsafe {
             node_left_raw = BTreeNode::alloc();
-            (*node_left_raw).basic = Self::new(self.head.tag.is_leaf());
+            (*node_left_raw).basic = Self::new(self.head.head.tag.is_leaf());
             &mut (*node_left_raw).basic
         };
-        let mut node_right = Self::new(self.head.tag.is_leaf());
+        let mut node_right = Self::new(self.head.head.tag.is_leaf());
 
         let mut split_fences = SplitFences::new(self.fences(), truncated_sep_key, parent_prefix_len, self.prefix(key_in_node));
         node_left.set_fences(split_fences.lower());
@@ -579,7 +581,7 @@ unsafe impl Node for BasicNode {
             lower_fence: FenceRef(lower),
             upper_fence: FenceRef(upper),
         }.restrip());
-        if self.head.tag.is_inner() {
+        if self.head.head.tag.is_inner() {
             let mut current_lower: SmallBuff = lower.into();
             for (i, s) in self.slots().iter().enumerate() {
                 let current_upper =
@@ -642,7 +644,7 @@ impl SeparableInnerConversionSource for BasicNode {
     fn find_separator<'a>(&'a self) -> (usize, Self::Separator<'a>) {
         find_separator(
             self.head.count as usize,
-            self.head.tag.is_leaf(),
+            self.head.head.tag.is_leaf(),
             |i: usize| self.slots()[i].key(self.as_bytes()),
         )
     }

@@ -5,6 +5,7 @@ use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use std::io::Write;
 use std::mem::{align_of, ManuallyDrop, size_of, transmute};
 use std::simd::SimdPartialEq;
+use crate::btree_node::{AdaptionState, BTreeNodeHead};
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -33,7 +34,7 @@ struct FenceKeySlot {
 #[derive(Clone)]
 #[repr(C)]
 struct HashLeafHead {
-    tag: BTreeNodeTag,
+    head: BTreeNodeHead,
     count: u16,
     lower_fence: FenceKeySlot,
     upper_fence: FenceKeySlot,
@@ -334,7 +335,7 @@ impl HashLeaf {
         assert_eq!(align_of::<Self>(), SIMD_ALIGN);
         HashLeaf {
             head: HashLeafHead {
-                tag: BTreeNodeTag::HashLeaf,
+                head: BTreeNodeHead { tag: BTreeNodeTag::HashLeaf, adaption_state: AdaptionState::new() },
                 count: 0,
                 lower_fence: FenceKeySlot { offset: 0, len: 0 },
                 upper_fence: FenceKeySlot { offset: 0, len: 0 },
@@ -522,10 +523,8 @@ unsafe impl Node for HashLeaf {
                 return Err(());
             }
         }
-        if self.head.tag.is_leaf() {
-            self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
-            self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
-        }
+        self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
+        self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
         node_left.validate();
         node_right.validate();
         // node_left.print();
