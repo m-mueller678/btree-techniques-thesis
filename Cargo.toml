@@ -13,7 +13,7 @@ rustc-hash = "1.1.0"
 once_cell = "1.16.0"
 tracing = { version = "0.1.37", features = ["release_max_level_off", "max_level_trace", "attributes"] }
 tracing-subscriber = { version = "0.3.16" }
-rand = "0.8.5"
+rand = { version = "0.8.5", features = ["small_rng"] }
 rand_xoshiro = "0.6.0"
 counter = "0.5.7"
 bytemuck = "1.12.3"
@@ -36,14 +36,13 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_basic", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_true"]
+default = ["head-early-abort-create_false", "inner_basic", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_1000"]
 head-early-abort-create_false = []
 inner_basic = []
 leaf_hash = []
 hash-leaf-simd_32 = []
 strip-prefix_false = []
 hash_crc32 = []
-hash_wyhash = []
-hash_fx = []
-descend-adapt-inner_true = []
-descend-adapt-inner_false = []
+descend-adapt-inner_1000 = []
+descend-adapt-inner_100 = []
+descend-adapt-inner_none = []
