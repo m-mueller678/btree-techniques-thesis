@@ -4,6 +4,7 @@ use crate::{BTreeNode, FatTruncatedKey, PrefixTruncatedKey};
 use std::ops::{Deref, Range};
 
 use std::ptr;
+use crate::branch_cache::BranchCacheAccessor;
 use crate::btree_node::STRIP_PREFIX;
 
 
@@ -19,7 +20,7 @@ pub trait InnerNode: InnerConversionSource + Node {
     /// insert should be called with a string truncated to that length
     fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()>;
 
-    fn find_child_index(&self, key: &[u8]) -> usize;
+    fn find_child_index(&self, key: &[u8], branch_cache: &mut BranchCacheAccessor) -> usize;
 }
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {

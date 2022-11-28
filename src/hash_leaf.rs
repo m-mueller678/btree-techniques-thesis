@@ -1,5 +1,5 @@
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, FenceRef, InnerNode, LeafNode, Node};
+use crate::node_traits::{FenceData, FenceRef, InnerNode, LeafNode, Node};
 use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use std::io::Write;

@@ -1,15 +1,18 @@
 use crate::{BTreeNode, PAGE_SIZE};
 use std::ptr;
+use crate::branch_cache::BranchCacheAccessor;
 
 
 pub struct BTree {
     pub root: *mut BTreeNode,
+    branch_cache: BranchCacheAccessor,
 }
 
 impl BTree {
     pub fn new() -> Self {
         BTree {
             root: BTreeNode::new_leaf(),
+            branch_cache: BranchCacheAccessor::new()
         }
     }
 
@@ -17,7 +20,7 @@ impl BTree {
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) {
         assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
         unsafe {
-            let (node, parent, pos) = (&mut *self.root).descend(key, |_| false);
+            let (node, parent, pos) = (&mut *self.root).descend(key, |_| false, &mut self.branch_cache);
             let node = &mut *node;
             if node.to_leaf_mut().insert(key, payload).is_ok() {
                 return;
@@ -30,7 +33,7 @@ impl BTree {
     #[tracing::instrument(skip(self))]
     pub unsafe fn lookup(&mut self, payload_len_out: *mut u64, key: &[u8]) -> *const u8 {
         tracing::info!("lookup {key:?}");
-        let (node, _, _) = (*self.root).descend(key, |_| false);
+        let (node, _, _) = (*self.root).descend(key, |_| false, &mut self.branch_cache);
         let node = &*node;
         if let Some(data) = node.to_leaf().lookup(key) {
             ptr::write(payload_len_out, data.len() as u64);
@@ -61,7 +64,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     unsafe fn ensure_space(&mut self, to_split: *mut BTreeNode, key: &[u8]) {
-        let (node, parent, pos) = (*self.root).descend(key, |n| n == to_split);
+        let (node, parent, pos) = (*self.root).descend(key, |n| n == to_split, &mut self.branch_cache);
         debug_assert!(node == to_split);
         self.split_node(to_split, parent, key, pos);
     }
@@ -87,7 +90,7 @@ impl BTree {
     pub unsafe fn remove(&mut self, key: &[u8]) -> bool {
         let mut merge_target: *mut BTreeNode = ptr::null_mut();
         loop {
-            let (node, parent, index) = (&mut *self.root).descend(key, |n| n == merge_target);
+            let (node, parent, index) = (&mut *self.root).descend(key, |n| n == merge_target, &mut self.branch_cache);
             if merge_target.is_null() {
                 let not_found = (&mut *node).to_leaf_mut().remove(key).is_none();
                 self.validate();

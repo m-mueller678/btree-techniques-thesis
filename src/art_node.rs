@@ -4,8 +4,9 @@ use std::mem::{align_of, size_of};
 use std::ops::Range;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
+use crate::branch_cache::BranchCacheAccessor;
 use crate::find_separator::find_separator;
-use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
+use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, reinterpret_mut, SmallBuff};
 use crate::vtables::BTreeNodeTag;
 
@@ -446,7 +447,7 @@ impl InnerNode for ArtNode {
         }
     }
 
-    fn find_child_index(&self, key: &[u8]) -> usize {
+    fn find_child_index(&self, key: &[u8], _bc: &mut BranchCacheAccessor) -> usize {
         unsafe {
             let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
             let range_index = self.find_key_range_unchecked(key.0, self.head.root_node) as usize;

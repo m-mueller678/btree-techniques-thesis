@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::find_separator::{find_separator, KeyRef};
-use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{
     common_prefix_len, get_key_from_slice, partial_restore, reinterpret_mut, SmallBuff,
 };
@@ -12,6 +12,7 @@ use std::mem::{align_of, size_of, transmute};
 use std::{mem, ptr};
 use std::ops::Range;
 use bytemuck::{bytes_of, bytes_of_mut, Pod};
+use crate::branch_cache::BranchCacheAccessor;
 use crate::btree_node::{AdaptionState, BTreeNodeHead};
 use crate::vtables::BTreeNodeTag;
 
@@ -688,16 +689,25 @@ impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
 }
 
 impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {
-    fn find_child_index(&self, key: &[u8]) -> usize {
+    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
         if self.head.key_count == 0 {
             return 0;
         }
         let needle_head =
             Head::make_needle_head(PrefixTruncatedKey(&key[self.head.prefix_len as usize..]));
-        let (lower, upper) = self.search_hint(needle_head);
-        match self.as_parts().1[lower..upper].binary_search(&needle_head) {
-            Ok(i) | Err(i) => lower + i,
-        }
+        let index = bc.predict().filter(|&i| {
+            i <= self.head.key_count as usize
+                && (i == 0 || self.as_parts().1[i - 1] < needle_head)
+                && (i >= self.head.key_count as usize || needle_head <= self.as_parts().1[i])
+        })
+            .unwrap_or_else(|| {
+                let (lower, upper) = self.search_hint(needle_head);
+                match self.as_parts().1[lower..upper].binary_search(&needle_head) {
+                    Ok(i) | Err(i) => lower + i,
+                }
+            });
+        bc.store(index);
+        index
     }
 
     fn merge_children_check(&mut self, mut child_index: usize) -> Result<(), ()> {

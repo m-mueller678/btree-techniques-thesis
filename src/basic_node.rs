@@ -1,13 +1,14 @@
 use crate::btree_node::{AdaptionState, BTreeNode, BTreeNodeHead, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
-use crate::inner_node::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
+use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{get_key_from_slice, head, MergeFences, partial_restore, reinterpret_mut, short_slice, SmallBuff, SplitFences, trailing_bytes};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
 use std::ops::Range;
+use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -697,8 +698,15 @@ impl InnerNode for BasicNode {
         )
     }
 
-    fn find_child_index(&self, key: &[u8]) -> usize {
-        let index = self.lower_bound(self.truncate(key)).0;
+    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+        let truncated = self.truncate(key);
+        let index = bc.predict().filter(|&i| {
+            i <= self.slots().len()
+                && (i == 0 || self.slots()[i - 1].key(self.as_bytes()) < truncated)
+                && (i >= self.slots().len() || truncated <= self.slots()[i].key(self.as_bytes()))
+        })
+            .unwrap_or_else(|| self.lower_bound(truncated).0);
+        bc.store(index);
         index
     }
 }

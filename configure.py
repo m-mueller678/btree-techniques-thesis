@@ -20,7 +20,9 @@ FEATURES = {
     # "hash": ["crc32","wyhash", "fx"],
     "hash": ["crc32"],
     "descend-adapt-inner": ["1000", "100", "10", "none"],
+    "branch-cache": ["true", "false"],
 }
+
 
 def configure(chosen_features, revision=None):
     shutil.copyfile("Cargo.toml", "Cargo.toml.old")

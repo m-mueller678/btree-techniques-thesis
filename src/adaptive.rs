@@ -1,8 +1,8 @@
 use once_cell::sync::Lazy;
-use rand::{SeedableRng};
+use rand::{Rng, SeedableRng};
 use crate::BTreeNode;
 use crate::head_node::{U32ExplicitHeadNode, U64ExplicitHeadNode};
-use crate::inner_node::{InnerConversionSink};
+use crate::node_traits::{InnerConversionSink};
 use crate::vtables::BTreeNodeTag;
 use rand::distributions::Distribution;
 use rand::rngs::SmallRng;
@@ -13,6 +13,10 @@ static mut RAND: Lazy<SmallRng> = Lazy::new(|| SmallRng::from_entropy());
 pub fn infrequent(infrequency: u32) -> bool {
     let distribution = rand::distributions::Bernoulli::from_ratio(1, infrequency).unwrap();
     distribution.sample(unsafe { &mut *RAND })
+}
+
+pub fn gen_random() -> u32 {
+    unsafe { &mut *RAND }.gen()
 }
 
 pub fn adapt_inner(node: &mut BTreeNode) {

@@ -1,6 +1,6 @@
 use std::ptr;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use crate::inner_node::{InnerNode, LeafNode, Node};
+use crate::node_traits::{InnerNode, LeafNode, Node};
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use crate::basic_node::BasicNode;

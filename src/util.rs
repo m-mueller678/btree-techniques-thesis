@@ -1,4 +1,4 @@
-use crate::inner_node::{FenceData, FenceRef};
+use crate::node_traits::{FenceData, FenceRef};
 use crate::{FatTruncatedKey, HeadTruncatedKey, PrefixTruncatedKey};
 use smallvec::SmallVec;
 use crate::btree_node::STRIP_PREFIX;

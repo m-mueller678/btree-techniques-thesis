@@ -20,13 +20,14 @@ pub mod btree_node;
 mod find_separator;
 pub mod hash_leaf;
 pub mod head_node;
-pub mod inner_node;
+pub mod node_traits;
 pub mod op_count;
 pub mod util;
 mod vtables;
 pub mod node_stats;
 pub mod art_node;
 pub mod adaptive;
+pub mod branch_cache;
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();

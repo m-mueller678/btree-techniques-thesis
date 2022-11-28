@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::inner_node::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
+use crate::node_traits::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
 use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
@@ -9,6 +9,7 @@ use std::{mem, ptr};
 use std::ops::Range;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
+use crate::branch_cache::BranchCacheAccessor;
 use crate::head_node;
 use crate::util::reinterpret_mut;
 use crate::vtables::BTreeNodeTag;
@@ -92,11 +93,13 @@ impl BTreeNode {
         mut self: &mut Self,
         key: &[u8],
         mut filter: impl FnMut(*mut BTreeNode) -> bool,
+        bc: &mut BranchCacheAccessor,
     ) -> (*mut BTreeNode, *mut BTreeNode, usize) {
         let mut parent = ptr::null_mut();
         let mut index = 0;
+        bc.reset();
         while self.tag().is_inner() && !filter(self) {
-            index = self.to_inner().find_child_index(key);
+            index = self.to_inner().find_child_index(key, bc);
             parent = self;
             if cfg!(feature = "descend-adapt-inner_10") {
                 if !self.adaption_state().is_adapted() && infrequent(10) {
