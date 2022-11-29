@@ -1,7 +1,7 @@
 #![feature(is_sorted)]
 
 
-use btree::{PrefixTruncatedKey};
+use btree::{bench, PrefixTruncatedKey};
 
 
 use std::hint::black_box;
@@ -110,4 +110,6 @@ pub fn perf<H: FullKeyHead>() {
     println!("{},{},{}", duration_acc.as_nanos() as f64 / count_acc as f64, cfg!(feature = "use-full-length_true"), std::any::type_name::<H>())
 }
 
-fn main() {}
+fn main() {
+    bench::bench_main();
+}

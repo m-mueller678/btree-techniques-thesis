@@ -28,6 +28,7 @@ pub mod node_stats;
 pub mod art_node;
 pub mod adaptive;
 pub mod branch_cache;
+pub mod bench;
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();

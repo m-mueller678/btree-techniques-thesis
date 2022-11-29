@@ -49,14 +49,14 @@ impl BranchCacheAccessor {
 
     #[inline]
     pub fn predict(&mut self) -> Option<usize> {
-        #[cfg(debug_assertions)]{
-            assert!(self.predict_next);
-            self.predict_next = false;
-        }
         if cfg!(feature="branch-cache_false") {
             return None;
         }
         if self.active {
+            #[cfg(debug_assertions)]{
+                assert!(self.predict_next);
+                self.predict_next = false;
+            }
             self.levels[self.index as usize].get_hint()
         } else {
             None
@@ -65,14 +65,14 @@ impl BranchCacheAccessor {
 
     #[inline]
     pub fn store(&mut self, position: usize) {
-        #[cfg(debug_assertions)]{
-            assert!(!self.predict_next);
-            self.predict_next = true;
-        }
         if cfg!(feature="branch-cache_false") {
             return;
         }
         if self.active {
+            #[cfg(debug_assertions)]{
+                assert!(!self.predict_next);
+                self.predict_next = true;
+            }
             self.index += 1;
             self.active = self.active && (self.index as usize) < self.levels.len() && self.levels[self.index as usize].position as usize == position;
             self.levels[self.index as usize - 1].store(position);
@@ -89,5 +89,13 @@ impl BranchCacheAccessor {
         }
         self.active = true;
         self.index = 0;
+    }
+
+    #[inline]
+    pub fn set_inactive(&mut self) {
+        #[cfg(debug_assertions)]{
+            assert!(self.predict_next);
+        }
+        self.active = false;
     }
 }

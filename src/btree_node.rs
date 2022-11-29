@@ -1,6 +1,6 @@
 use crate::basic_node::BasicNode;
 use crate::hash_leaf::HashLeaf;
-use crate::node_traits::{FallbackInnerConversionSink, FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
+use crate::node_traits::{FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
 use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
 use std::intrinsics::transmute;
@@ -10,9 +10,12 @@ use std::ops::Range;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
 use crate::branch_cache::BranchCacheAccessor;
-use crate::head_node;
-use crate::util::reinterpret_mut;
 use crate::vtables::BTreeNodeTag;
+#[allow(unused_imports)]
+use crate::head_node;
+#[allow(unused_imports)]
+use crate::node_traits::FallbackInnerConversionSink;
+use crate::util::reinterpret_mut;
 
 
 #[cfg(feature = "inner_basic")]
@@ -122,6 +125,33 @@ impl BTreeNode {
             self = unsafe { &mut *self.to_inner().get_child(index) };
         }
         (self, parent, index)
+    }
+
+
+    /// returns true if all leaf nodes after self are outside range
+    /// bc must be inactive
+    pub fn range_lookup(
+        &mut self,
+        mut lower_inclusive: Option<&[u8]>,
+        upper_inclusive: Option<&[u8]>,
+        callback: &mut dyn FnMut(&[u8]),
+        bc: &mut BranchCacheAccessor,
+    ) {
+        if self.tag().is_inner() {
+            let this = self.to_inner();
+            let first_child_index = lower_inclusive.map(|k| this.find_child_index(k, bc)).unwrap_or(0);
+            let upper_child_index = upper_inclusive.map(|k| this.find_child_index(k, bc));
+            let key_count = this.key_count();
+            for child in first_child_index..upper_child_index.unwrap_or(key_count) + 1 {
+                let last = upper_child_index == Some(child);
+                unsafe {
+                    &mut *this.get_child(child)
+                }.range_lookup(lower_inclusive, upper_inclusive.filter(|_| last), callback, bc);
+                lower_inclusive = None;
+            }
+        } else {
+            self.to_leaf().range_lookup(lower_inclusive, upper_inclusive, callback)
+        }
     }
 
     pub unsafe fn alloc() -> *mut BTreeNode {

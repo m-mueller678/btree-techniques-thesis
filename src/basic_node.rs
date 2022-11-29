@@ -748,4 +748,20 @@ impl LeafNode for BasicNode {
         self.remove_slot(slot_id);
         Some(())
     }
+
+    fn range_lookup(&self, lower_inclusive: Option<&[u8]>, upper_inclusive: Option<&[u8]>, callback: &mut dyn FnMut(&[u8])) {
+        let start_index = lower_inclusive.map(|k| self.lower_bound(self.truncate(k)).0).unwrap_or(0);
+        let end_index_exclusive = upper_inclusive.map(|k| {
+            let (index, found) = self.lower_bound(self.truncate(k));
+            if found {
+                index + 1
+            } else {
+                index
+            }
+        }).unwrap_or(self.key_count());
+        for i in start_index..end_index_exclusive {
+            let s = self.slots()[i];
+            callback(s.value(self.as_bytes()));
+        }
+    }
 }

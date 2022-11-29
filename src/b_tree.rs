@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use crate::{BTreeNode, PAGE_SIZE};
 use std::ptr;
 use crate::branch_cache::BranchCacheAccessor;
@@ -12,7 +13,7 @@ impl BTree {
     pub fn new() -> Self {
         BTree {
             root: BTreeNode::new_leaf(),
-            branch_cache: BranchCacheAccessor::new()
+            branch_cache: BranchCacheAccessor::new(),
         }
     }
 
@@ -119,5 +120,11 @@ impl BTree {
             }
         }
         true
+    }
+
+    pub fn range_lookup(&mut self, range: RangeInclusive<&[u8]>, callback: &mut dyn FnMut(&[u8])) {
+        self.branch_cache.set_inactive();
+        unsafe { &mut *self.root }
+            .range_lookup(Some(range.start()), Some(range.end()), callback, &mut self.branch_cache);
     }
 }

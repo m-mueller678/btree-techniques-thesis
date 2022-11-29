@@ -604,4 +604,8 @@ impl LeafNode for HashLeaf {
         // self.print();
         Some(())
     }
+
+    fn range_lookup(&self, _lower_inclusive: Option<&[u8]>, _upper_inclusive: Option<&[u8]>, _callback: &mut dyn FnMut(&[u8])) {
+        unimplemented!()
+    }
 }
