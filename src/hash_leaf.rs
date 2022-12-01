@@ -519,6 +519,24 @@ impl HashLeaf {
         self.head.sorted_count = self.head.count;
         self.validate();
     }
+
+    pub fn lower_bound(&self, key: PrefixTruncatedKey) -> (usize, bool) {
+        if self.head.count == 0 {
+            return (0, false);
+        }
+        let search_result = self.slots().binary_search_by(|s| {
+            s.key(self.as_bytes()).cmp(&key)
+        });
+        match search_result {
+            Ok(index) | Err(index) => {
+                debug_assert!(
+                    index == self.slots().len() || key <= self.slots()[index].key(self.as_bytes())
+                );
+                debug_assert!(index == 0 || key > self.slots()[index - 1].key(self.as_bytes()));
+                (index, search_result.is_ok())
+            }
+        }
+    }
 }
 
 unsafe impl Node for HashLeaf {
@@ -642,7 +660,20 @@ impl LeafNode for HashLeaf {
         Some(())
     }
 
-    fn range_lookup(&self, _lower_inclusive: Option<&[u8]>, _upper_inclusive: Option<&[u8]>, _callback: &mut dyn FnMut(&[u8])) {
-        unimplemented!()
+    fn range_lookup(&mut self, lower_inclusive: Option<&[u8]>, upper_inclusive: Option<&[u8]>, callback: &mut dyn FnMut(&[u8])) {
+        self.sort();
+        let start_index = lower_inclusive.map(|k| self.lower_bound(self.truncate(k)).0).unwrap_or(0);
+        let end_index_exclusive = upper_inclusive.map(|k| {
+            let (index, found) = self.lower_bound(self.truncate(k));
+            if found {
+                index + 1
+            } else {
+                index
+            }
+        }).unwrap_or(self.head.count as usize);
+        for i in start_index..end_index_exclusive {
+            let s = self.slots()[i];
+            callback(s.value(self.as_bytes()));
+        }
     }
 }

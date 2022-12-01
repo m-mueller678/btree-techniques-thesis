@@ -50,9 +50,8 @@ pub trait LeafNode: Node {
     fn lookup(&self, key: &[u8]) -> Option<&[u8]>;
     fn remove(&mut self, key: &[u8]) -> Option<()>;
 
-    /// returns true if all leaf nodes after self are outside range
     fn range_lookup(
-        &self,
+        &mut self,
         lower_inclusive: Option<&[u8]>,
         upper_inclusive: Option<&[u8]>,
         callback: &mut dyn FnMut(&[u8]),

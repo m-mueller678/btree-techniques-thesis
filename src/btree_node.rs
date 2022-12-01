@@ -150,7 +150,7 @@ impl BTreeNode {
                 lower_inclusive = None;
             }
         } else {
-            self.to_leaf().range_lookup(lower_inclusive, upper_inclusive, callback)
+            self.to_leaf_mut().range_lookup(lower_inclusive, upper_inclusive, callback)
         }
     }
 
