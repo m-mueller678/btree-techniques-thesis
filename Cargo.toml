@@ -28,7 +28,7 @@ bumpalo = "3.11.1"
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
-opt-level = 1
+opt-level = 3
 
 [profile.release]
 lto = true

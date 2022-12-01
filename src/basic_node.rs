@@ -168,10 +168,8 @@ impl BasicNode {
             return (0, false);
         }
         if DYNAMIC_PREFIX {
-            if key.0.len() < self.head.dynamic_prefix_len as usize {
-                return (0, false);
-            }
-            match key.0[..self.head.dynamic_prefix_len as usize].cmp(self.dynamic_prefix()) {
+            let cmp_len = key.0.len().min(self.head.dynamic_prefix_len as usize);
+            match key.0[..cmp_len].cmp(self.dynamic_prefix()) {
                 Ordering::Less => return (0, false),
                 Ordering::Equal => {}
                 Ordering::Greater => return (self.head.count as usize, false),
@@ -480,7 +478,7 @@ impl BasicNode {
 
     fn maybe_grow_dynamic_prefix(&mut self) {
         if DYNAMIC_PREFIX {
-            if self.head.count > 1 && infrequent(1 << 15) {
+            if self.head.count > 1 && infrequent(1 << 12) {
                 let candidate = common_prefix_len(self.slots()[0].key(self.as_bytes()).0, self.slots().last().unwrap().key(self.as_bytes()).0);
                 debug_assert!(candidate >= self.head.dynamic_prefix_len as usize);
                 if self.head.dynamic_prefix_len as usize != candidate {
@@ -738,7 +736,7 @@ impl InnerNode for BasicNode {
     unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
         if DYNAMIC_PREFIX {
             let reset_dynamic_prefix = if self.key_count() == 0 { self.head.dynamic_prefix_len > 0 } else {
-                self.dynamic_prefix() != &key[..self.head.dynamic_prefix_len as usize]
+                !key.starts_with(self.dynamic_prefix())
             };
             if reset_dynamic_prefix {
                 self.change_dynamic_prefix(0);
