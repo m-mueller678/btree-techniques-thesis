@@ -147,9 +147,9 @@ impl ArtNode {
         }
     }
 
-    unsafe fn find_key_range_unchecked(&self, key: &[u8], node: u16) -> u16 {
+    unsafe fn find_key_range_unchecked(&self, key: &[u8], node: u16) -> (u16, usize) {
         if (node & NODE_REF_IS_RANGE) != 0 {
-            return node & !NODE_REF_IS_RANGE;
+            return (node & !NODE_REF_IS_RANGE, key.len());
         }
         let (node_bytes, extra) = self.read_node(node);
         match extra {
@@ -165,14 +165,14 @@ impl ArtNode {
                 if node_bytes.len() <= key.len() {
                     match key[..node_bytes.len()].cmp(node_bytes) {
                         Ordering::Equal => self.find_key_range_unchecked(&key[node_bytes.len()..], successor),
-                        Ordering::Less => self.node_min(node),
-                        Ordering::Greater => self.node_max(node),
+                        Ordering::Less => (self.node_min(node), key.len()),
+                        Ordering::Greater => (self.node_max(node), key.len()),
                     }
                 } else {
                     match key.cmp(node_bytes) {
                         Ordering::Equal => unreachable!(),
-                        Ordering::Less => self.node_min(node),
-                        Ordering::Greater => self.node_max(node),
+                        Ordering::Less => (self.node_min(node), key.len()),
+                        Ordering::Greater => (self.node_max(node), key.len()),
                     }
                 }
             }
@@ -395,20 +395,29 @@ impl InnerNode for ArtNode {
         }
     }
 
-    fn find_child_index(&self, key: &[u8], _bc: &mut BranchCacheAccessor) -> usize {
-        unsafe {
-            let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
-            let range_index = self.find_key_range_unchecked(key.0, self.head.root_node) as usize;
-            let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
-            debug_assert!(range.end == self.head.key_count as usize || key <= self.page_indirection_vector()[range.end].key(self));
-            debug_assert!(range.start == 0 || self.page_indirection_vector()[range.start - 1].key(self) < key);
-            let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&key, |e: &PageIndirectionVectorEntry| {
-                e.key(self)
-            }) {
-                Ok(i) | Err(i) => i
-            };
-            index
-        }
+    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+        let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
+        let index = bc.predict().filter(|&i| {
+            i <= self.key_count()
+                && (i == 0 || self.piv_entry(i - 1).key(self) < key)
+                && (i >= self.key_count() || key <= self.piv_entry(i).key(self))
+        })
+            .unwrap_or_else(|| unsafe {
+                let (range_index, remaining_key_len) = self.find_key_range_unchecked(key.0, self.head.root_node);
+                let range_index = range_index as usize;
+                let key_skip = key.len() - remaining_key_len;
+                let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
+                debug_assert!(range.end == self.head.key_count as usize || key <= self.page_indirection_vector()[range.end].key(self));
+                debug_assert!(range.start == 0 || self.page_indirection_vector()[range.start - 1].key(self) < key);
+                let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&&key.0[key_skip..], |e: &PageIndirectionVectorEntry| {
+                    &&e.key(self).0[key_skip..]
+                }) {
+                    Ok(i) | Err(i) => i
+                };
+                index
+            });
+        bc.store(index);
+        index
     }
 }
 

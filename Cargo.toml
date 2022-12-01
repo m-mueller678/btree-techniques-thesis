@@ -28,6 +28,7 @@ bumpalo = "3.11.1"
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
+opt-level = 3
 
 [profile.release]
 lto = true
@@ -38,16 +39,14 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_art", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_1000", "branch-cache_true"]
+default = ["head-early-abort-create_false", "inner_art", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false"]
 head-early-abort-create_false = []
+inner_basic = []
 inner_art = []
 leaf_hash = []
 hash-leaf-simd_32 = []
 strip-prefix_false = []
 hash_crc32 = []
-descend-adapt-inner_1000 = []
-descend-adapt-inner_100 = []
-descend-adapt-inner_10 = []
 descend-adapt-inner_none = []
-branch-cache_true = []
 branch-cache_false = []
+branch-cache_true = []

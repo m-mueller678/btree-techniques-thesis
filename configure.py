@@ -9,8 +9,8 @@ HOST = "cascade-01"
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    # "inner": ["padded", "basic", "explicit_length", "ascii"],
-    "inner": ["art"],
+    # "inner": ["padded", "basic", "explicit_length", "ascii","art"],
+    "inner": ["basic", "art"],
     "leaf": ["hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
@@ -20,7 +20,8 @@ FEATURES = {
     # "hash": ["crc32","wyhash", "fx"],
     "hash": ["crc32"],
     "descend-adapt-inner": ["1000", "100", "10", "none"],
-    "branch-cache": ["true", "false"],
+    "descend-adapt-inner": ["none"],
+    "branch-cache": ["false", "true"],
 }
 
 
