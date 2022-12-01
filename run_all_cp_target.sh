@@ -7,8 +7,6 @@ cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {1..40}
-do
-FILE="$HOME/data/urls" SHUF=1 find . -name 'btree-*' -exec {} >> $OUT \;
-INT=2e7 SHUF=1 find . -name 'btree-*' -exec {} >> $OUT \;
-done
+OP_COUNT=1e9 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;
+OP_COUNT=1e9 INT=2e7 find . -name 'btree-*' -exec {} >> $OUT \;
+OP_COUNT=1e9 LOCALITY=0.99 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;

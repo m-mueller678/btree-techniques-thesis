@@ -10,7 +10,7 @@ FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
     # "inner": ["padded", "basic", "explicit_length", "ascii","art"],
-    "inner": ["basic", "art"],
+    "inner": ["explicit_length", "art"],
     "leaf": ["hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
@@ -19,7 +19,7 @@ FEATURES = {
     "strip-prefix": ["false"],
     # "hash": ["crc32","wyhash", "fx"],
     "hash": ["crc32"],
-    "descend-adapt-inner": ["1000", "100", "10", "none"],
+    # "descend-adapt-inner": ["1000", "100", "10", "none"],
     "descend-adapt-inner": ["none"],
     "branch-cache": ["false", "true"],
 }
@@ -81,8 +81,8 @@ def build_all(cfg_set):
     for cfg in cfg_set:
         counter = counter + 1
         configure(cfg, revision)
-        assert system(f'{CMAKE_PATH} --build cmake-build-release --target btree -j 3') == 0
-        shutil.copyfile("cmake-build-release/btree", f'{build_dir}/btree-{revision}-{counter}')
+        assert system(f'cargo rustc --bin btree --release -- -C target-cpu=cascadelake') == 0
+        shutil.copyfile("target/release/btree", f'{build_dir}/btree-{revision}-{counter}')
     return build_dir
 
 
@@ -96,7 +96,7 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-# dir = build_all(all_feature_combinations())
-# upload(dir)
-# print_uploaded()
+dir = build_all(all_feature_combinations())
+upload(dir)
+print_uploaded()
 configure(default_features())

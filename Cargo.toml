@@ -39,9 +39,9 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_art", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false"]
+default = ["head-early-abort-create_false", "inner_explicit_length", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false"]
 head-early-abort-create_false = []
-inner_basic = []
+inner_explicit_length = []
 inner_art = []
 leaf_hash = []
 hash-leaf-simd_32 = []
