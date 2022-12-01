@@ -2,6 +2,9 @@
 #![feature(pointer_is_aligned)]
 #![feature(int_roundings)]
 #![feature(ptr_metadata)]
+#![feature(maybe_uninit_uninit_array)]
+#![feature(maybe_uninit_slice)]
+#![feature(is_sorted)]
 extern crate core;
 
 use crate::btree_node::{BTreeNode, PAGE_SIZE};

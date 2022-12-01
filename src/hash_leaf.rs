@@ -3,7 +3,7 @@ use crate::node_traits::{FenceData, FenceRef, InnerNode, LeafNode, Node};
 use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use std::io::Write;
-use std::mem::{align_of, ManuallyDrop, size_of, transmute};
+use std::mem::{align_of, ManuallyDrop, MaybeUninit, size_of, transmute};
 use std::simd::SimdPartialEq;
 use crate::btree_node::{AdaptionState, BTreeNodeHead};
 use crate::vtables::BTreeNodeTag;
@@ -36,6 +36,7 @@ struct FenceKeySlot {
 struct HashLeafHead {
     head: BTreeNodeHead,
     count: u16,
+    sorted_count: u16,
     lower_fence: FenceKeySlot,
     upper_fence: FenceKeySlot,
     space_used: u16,
@@ -337,6 +338,7 @@ impl HashLeaf {
             head: HashLeafHead {
                 head: BTreeNodeHead { tag: BTreeNodeTag::HashLeaf, adaption_state: AdaptionState::new() },
                 count: 0,
+                sorted_count: 0,
                 lower_fence: FenceKeySlot { offset: 0, len: 0 },
                 upper_fence: FenceKeySlot { offset: 0, len: 0 },
                 space_used: 0,
@@ -439,6 +441,8 @@ impl HashLeaf {
                 .map(|s| (s.key_len + s.val_len) as usize)
                 .sum::<usize>()
         );
+        debug_assert!(self.head.sorted_count <= self.head.count);
+        debug_assert!(self.slots()[..self.head.sorted_count as usize].is_sorted_by_key(|s| s.key(self.as_bytes())));
     }
 
     pub fn try_merge_right(
@@ -450,6 +454,7 @@ impl HashLeaf {
         // self.print();
         // right.print();
         //TODO optimize
+        // if prefix length does not change, hashes can be copied
         let mut tmp = Self::new();
         tmp.set_fences(MergeFences::new(self.fences(), separator, right.fences()).fences());
         let left = self.slots().iter().map(|s| (s, &*self));
@@ -463,6 +468,7 @@ impl HashLeaf {
                 partial_restore(separator.prefix_len, segments, tmp.head.prefix_len as usize);
             tmp.insert_truncated(PrefixTruncatedKey(&reconstructed), s.value(this.as_bytes()))?;
         }
+        tmp.head.sorted_count = self.head.sorted_count;
         tmp.validate();
         // tmp.print();
         debug_assert_eq!(tmp.head.count, self.head.count + right.head.count);
@@ -473,6 +479,46 @@ impl HashLeaf {
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
     }
+
+    fn sort(&mut self) {
+        let unsorted_count = (self.head.count - self.head.sorted_count) as usize;
+        if unsorted_count == 0 {
+            return;
+        }
+        assert!(self.head.sorted_count <= self.head.count);
+        let mut slots_space = MaybeUninit::<(HashSlot, u8)>::uninit_array::<{ PAGE_SIZE / size_of::<(HashSlot, u8)>() }>();
+        for i in 0..unsorted_count {
+            slots_space[i].write((self.slots()[self.head.sorted_count as usize + i], self.hashes()[self.head.sorted_count as usize + i]));
+        }
+        let unsorted_slots = unsafe { MaybeUninit::slice_assume_init_mut(&mut slots_space[..unsorted_count]) };
+        unsorted_slots.sort_unstable_by_key(|s| s.0.key(self.as_bytes()));
+
+        let mut unmerged_remaining = self.head.count as usize;
+        let mut sorted_remaining = self.head.sorted_count as usize;
+        let mut unsorted_remaining = unsorted_count;
+        while sorted_remaining > 0 && unsorted_remaining > 0 {
+            assert_eq!(unmerged_remaining, sorted_remaining + unsorted_remaining);
+            if self.slots()[sorted_remaining - 1].key(self.as_bytes()) > unsorted_slots[unsorted_remaining - 1].0.key(self.as_bytes()) {
+                self.slots_mut().copy_within(sorted_remaining - 1..=sorted_remaining - 1, unmerged_remaining - 1);
+                self.hashes_mut().copy_within(sorted_remaining - 1..=sorted_remaining - 1, unmerged_remaining - 1);
+                sorted_remaining -= 1;
+                unmerged_remaining -= 1;
+            } else {
+                self.slots_mut()[unmerged_remaining - 1] = unsorted_slots[unsorted_remaining - 1].0;
+                self.hashes_mut()[unmerged_remaining - 1] = unsorted_slots[unsorted_remaining - 1].1;
+                unsorted_remaining -= 1;
+                unmerged_remaining -= 1;
+            }
+        }
+        while unsorted_remaining > 0 {
+            self.slots_mut()[unmerged_remaining - 1] = unsorted_slots[unsorted_remaining - 1].0;
+            self.hashes_mut()[unmerged_remaining - 1] = unsorted_slots[unsorted_remaining - 1].1;
+            unsorted_remaining -= 1;
+            unmerged_remaining -= 1;
+        }
+        self.head.sorted_count = self.head.count;
+        self.validate();
+    }
 }
 
 unsafe impl Node for HashLeaf {
@@ -482,22 +528,8 @@ unsafe impl Node for HashLeaf {
         index_in_parent: usize,
         key_in_self: &[u8],
     ) -> Result<(), ()> {
-        {
-            //sort
-            let this = self as *mut Self as *mut u8;
-            let count = self.head.count as usize;
-            unsafe {
-                let slots = std::slice::from_raw_parts_mut(
-                    this.offset(Self::layout(count).slots_start as isize) as *mut HashSlot,
-                    count,
-                );
-                slots.sort_by_key(|s| {
-                    std::slice::from_raw_parts(this.offset(s.offset as isize), s.key_len as usize)
-                });
-            };
-        }
-
-        // self.print();
+        //TODO if prefix length does not change, hashes can be copied
+        self.sort();
 
         // split
         let (sep_slot, truncated_sep_key) =
@@ -525,6 +557,8 @@ unsafe impl Node for HashLeaf {
         }
         self.copy_key_value_range(&self.slots()[..=sep_slot], node_left);
         self.copy_key_value_range(&self.slots()[sep_slot + 1..], &mut node_right);
+        node_left.head.sorted_count = node_left.head.count;
+        node_right.head.sorted_count = node_right.head.count;
         node_left.validate();
         node_right.validate();
         // node_left.print();
@@ -588,6 +622,9 @@ impl LeafNode for HashLeaf {
             slots[index] = slots[last];
             let hashes = self.hashes_mut();
             hashes[index] = hashes[last];
+        }
+        if self.head.sorted_count > index as u16 {
+            self.head.sorted_count = index as u16;
         }
         assert!(SLOTS_FIRST);
         let old_layout = Self::layout(new_count + 1);

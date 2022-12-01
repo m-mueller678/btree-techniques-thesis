@@ -43,12 +43,22 @@ impl StatAggregator {
     }
 }
 
-fn init_bench() -> Xoshiro128PlusPlus {
+// prevent inlining to improve perf usability
+#[inline(never)]
+fn init_bench(value_length: usize, data: &mut [&[u8]]) -> (BTree, Xoshiro128PlusPlus, Vec<u8>) {
     let mut rng = Xoshiro128PlusPlus::from_entropy();
     assert!(minstant::is_tsc_available());
     let core_id = core_affinity::get_core_ids().unwrap().choose(&mut rng).cloned().unwrap();
     assert!(core_affinity::set_for_current(core_id));
-    rng
+    let mut value = vec![0u8; value_length];
+    rng.fill_bytes(&mut value);
+    let mut tree = BTree::new();
+    data.shuffle(&mut rng);
+    for k in &data[..data.len() / 2] {
+        tree.insert(k, &value);
+    }
+    data.sort_unstable();
+    (tree, rng, value)
 }
 
 fn bench(op_count: usize,
@@ -59,17 +69,9 @@ fn bench(op_count: usize,
          data: &mut [&[u8]],
 ) -> [StatAggregator; 4] {
     let modify_probability = modify_ratio * 2.0 / (1.0 - range_ratio);
-    let mut rng = init_bench();
+    let (mut tree, mut rng, value) = init_bench(value_length, data);
     let rng = &mut rng;
     let mut stats: [StatAggregator; 4] = Default::default();
-    let mut value = vec![0u8; value_length];
-    rng.fill_bytes(&mut value);
-    let mut tree = BTree::new();
-    data.shuffle(rng);
-    for k in &data[..data.len() / 2] {
-        tree.insert(k, &value);
-    }
-    data.sort_unstable();
     let index_distribution = Uniform::new(0, data.len());
     let local_distribution = Uniform::new(0, 20);
     let mut index = 0;

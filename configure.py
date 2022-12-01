@@ -95,7 +95,7 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-dir = build_all(all_feature_combinations())
-upload(dir)
-print_uploaded()
+# dir = build_all(all_feature_combinations())
+# upload(dir)
+# print_uploaded()
 configure(default_features())
