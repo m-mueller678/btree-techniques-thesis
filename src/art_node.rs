@@ -2,11 +2,12 @@ use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
+use std::ptr;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::find_separator::find_separator;
-use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
+use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerInsertSource, InnerNode, Node, SeparableInnerConversionSource, split_in_place};
 use crate::util::{common_prefix_len, get_key_from_slice, partial_restore, reinterpret, reinterpret_mut, SmallBuff};
 use crate::vtables::BTreeNodeTag;
 
@@ -87,28 +88,16 @@ impl ArtNode {
         (node_bytes, extra)
     }
 
-    fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, mut key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
-        let mut full_prefix = prefix_len;
+    fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
+        let original_start = key_range.start;
         if key_range.len() < 3 {
-            return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
+            return Ok(self.push_range_array_entry(key_range)? | NODE_REF_IS_RANGE);
         }
-        full_prefix += common_prefix_len(&keys(self, key_range.start).0[full_prefix..], &keys(self, key_range.end - 1).0[full_prefix..]);
-        while keys(self, key_range.start).len() == full_prefix {
-            let without_first = common_prefix_len(&keys(self, key_range.start + 1).0[full_prefix..], &keys(self, key_range.end - 1).0[full_prefix..]);
-            if without_first > 0 {
-                key_range.start += 1;
-                full_prefix += without_first;
-                if key_range.len() < 3 {
-                    return Ok(self.push_range_array_entry(key_range.end as u16)? | NODE_REF_IS_RANGE);
-                }
-            } else {
-                break;
-            }
-        }
+        let full_prefix = prefix_len + common_prefix_len(&keys(self, key_range.start).0[prefix_len..], &keys(self, key_range.end - 1).0[prefix_len..]);
         let ret = if full_prefix > prefix_len {
-            self.push_range_array_entry(key_range.start as u16)?;
+            self.push_range_array_entry(original_start..key_range.start)?;
             self.construct_inner_decision_node::<F>(&keys, key_range.clone(), full_prefix)?;
-            self.push_range_array_entry(key_range.end as u16)?;
+            self.push_range_array_entry(key_range.end..key_range.end)?;
             let span_len = full_prefix - prefix_len;
             self.set_heap_write_pos_mod_2(span_len as u16)?;
             unsafe {
@@ -168,7 +157,7 @@ impl ArtNode {
                 let child_index = if key.is_empty() {
                     0
                 } else {
-                    node_bytes.iter().position(|&k| key[0] <= k).unwrap_or(node_bytes.len())
+                    node_bytes.iter().position(|&k| key[0] < k).unwrap_or(node_bytes.len())
                 };
                 self.find_key_range_unchecked(key, children[child_index])
             }
@@ -199,7 +188,8 @@ impl ArtNode {
         {
             let mut range_start = key_range.start;
             for i in range_start + 1..key_range.end {
-                if !(i == range_start + 1 && keys(self, i - 1).len() == prefix_len) && keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
+                if (i == range_start + 1 && keys(self, i - 1).len() == prefix_len)
+                    || keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
                     children.push(self.construct::<F>(keys, range_start..i, prefix_len)?);
                     range_start = i;
                 }
@@ -217,8 +207,10 @@ impl ArtNode {
                 let range_start = key_range.start;
                 let mut next_write = 0;
                 for i in range_start + 1..key_range.end {
-                    if !(i == range_start + 1 && keys(self, i - 1).len() == prefix_len) && keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
-                        reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4 + next_write] = keys(self, i - 1)[prefix_len];
+                    if
+                    (i == range_start + 1 && keys(self, i - 1).len() == prefix_len)
+                        || keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
+                        reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4 + next_write] = keys(self, i)[prefix_len];
                         next_write += 1;
                     }
                 }
@@ -267,13 +259,14 @@ impl ArtNode {
     }
 
     /// overwrites page indirection vector
-    fn push_range_array_entry(&mut self, index: u16) -> Result<u16, ()> {
+    fn push_range_array_entry(&mut self, range: Range<usize>) -> Result<u16, ()> {
         if self.free_space() < 2 {
             return Err(());
         } else {
             let pos = self.head.range_array_len;
             unsafe {
-                self.data.range_array[pos as usize] = index;
+                debug_assert!(pos == 0 && range == (0..0) || range.start == self.data.range_array[pos as usize - 1] as usize);
+                self.data.range_array[pos as usize] = range.end as u16;
             }
             self.head.range_array_len += 1;
             Ok(pos)
@@ -285,14 +278,6 @@ impl ArtNode {
             let offset = Self::layout(self.head.range_array_len as usize).range_array;
             let ptr = reinterpret::<Self, [u8; PAGE_SIZE]>(self).as_ptr().offset(offset as isize) as *const u16;
             std::slice::from_raw_parts(ptr, self.head.range_array_len as usize)
-        }
-    }
-
-    fn range_array_mut(&mut self) -> &mut [u16] {
-        unsafe {
-            let offset = Self::layout(self.head.range_array_len as usize).range_array;
-            let ptr = reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self).as_ptr().offset(offset as isize) as *mut u16;
-            std::slice::from_raw_parts_mut(ptr, self.head.range_array_len as usize)
         }
     }
 
@@ -309,19 +294,6 @@ impl ArtNode {
             let ptr = (self as *const Self as *const u8).offset(Self::layout(self.head.range_array_len as usize).page_indirection_vector as isize) as *const PageIndirectionVectorEntry;
             std::slice::from_raw_parts(ptr, self.key_count())
         }
-    }
-
-    fn find_key_range(&self, k: PrefixTruncatedKey) -> usize {
-        let range_index = unsafe {
-            self.find_key_range_unchecked(k.0, self.head.root_node) as usize
-        };
-        if cfg!(debug_assertions) {
-            let low_key = self.range_array()[range_index - 1] as usize;
-            let high_key = self.range_array()[range_index] as usize;
-            assert!(low_key == 0 || k >= self.page_indirection_vector()[low_key].key(self));
-            assert!(high_key == self.head.key_count as usize || k < self.page_indirection_vector()[high_key].key(self));
-        }
-        range_index
     }
 }
 
@@ -405,35 +377,11 @@ impl InnerNode for ArtNode {
     }
 
     unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
-        if cfg!(debug_assertions) {
-            for e in self.page_indirection_vector() {
-                self.find_key_range(e.key(self));
-            }
-            self.find_key_range(key);
-        }
-        self.heap_write((child as usize).to_ne_bytes().as_slice())?;
-        let key_offfset = self.heap_write(key.0)?;
-        if self.free_space() < size_of::<PageIndirectionVectorEntry>() {
-            return Err(());
-        }
-        let piv_ptr = (self as *mut Self as *mut u8).offset(Self::layout(self.head.range_array_len as usize).page_indirection_vector as isize) as *mut PageIndirectionVectorEntry;
-        let new_key_count = self.head.key_count as usize + 1;
-        let extended_piv = std::slice::from_raw_parts_mut(piv_ptr, new_key_count);
-        extended_piv.copy_within(index..new_key_count - 1, index + 1);
-        extended_piv[index] = PageIndirectionVectorEntry {
-            key_offset: key_offfset as u16,
-            key_len: key.0.len() as u16,
-        };
-        self.head.key_count = new_key_count as u16;
-        for r in self.range_array_mut().iter_mut().skip(1) {
-            if *r >= index as u16 {
-                *r += 1;
-            }
-        }
-        if cfg!(debug_assertions) {
-            for e in self.page_indirection_vector() {
-                self.find_key_range(e.key(self));
-            }
+        let mut tmp = BTreeNode::new_uninit();
+
+        Self::create(&mut tmp, &InnerInsertSource::new(self, index, key, child))?;
+        unsafe {
+            ptr::copy_nonoverlapping(&tmp as *const BTreeNode as *const Self, self, 1);
         }
         Ok(())
     }
@@ -452,8 +400,8 @@ impl InnerNode for ArtNode {
             let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
             let range_index = self.find_key_range_unchecked(key.0, self.head.root_node) as usize;
             let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
-            debug_assert!(range.end == self.head.key_count as usize || key < self.page_indirection_vector()[range.end].key(self));
-            debug_assert!(range.start == 0 || self.page_indirection_vector()[range.start].key(self) <= key);
+            debug_assert!(range.end == self.head.key_count as usize || key <= self.page_indirection_vector()[range.end].key(self));
+            debug_assert!(range.start == 0 || self.page_indirection_vector()[range.start - 1].key(self) < key);
             let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&key, |e: &PageIndirectionVectorEntry| {
                 e.key(self)
             }) {
@@ -500,7 +448,7 @@ unsafe impl InnerConversionSink for ArtNode {
             });
         }
         this.head.key_count = key_count as u16;
-        this.push_range_array_entry(0)?;
+        this.push_range_array_entry(0..0)?;
         this.head.root_node = this.construct(&|node, index| {
             let s = key_entries[index];
             PrefixTruncatedKey(unsafe {
@@ -555,7 +503,7 @@ impl InnerConversionSource for ArtNode {
     }
 
     fn get_key_length_max(&self, _range: Range<usize>) -> usize {
-        unimplemented!()
+        self.page_indirection_vector().iter().map(|e| e.key_len as usize).max().unwrap_or(0)
     }
 }
 

@@ -21,7 +21,7 @@ fn total_node_count(stats: &[InnerNodeData]) -> usize {
 pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<InnerNodeData> {
     let mut ret = Vec::new();
     fn visit(node: &BTreeNode, depth: usize, out: &mut Vec<InnerNodeData>) {
-        let mut buffer = [0u8; 1 << 9];
+        let mut buffer = [0u8; 1 << 12];
         if node.tag().is_leaf() {
             return;
         }

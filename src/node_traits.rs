@@ -419,3 +419,54 @@ unsafe impl<A: InnerConversionSink, B: InnerConversionSink> InnerConversionSink 
         }
     }
 }
+
+pub struct InnerInsertSource<'a, T: InnerConversionSource> {
+    src: &'a T,
+    index: usize,
+    key: PrefixTruncatedKey<'a>,
+    child: *mut BTreeNode,
+}
+
+impl<'a, T: InnerConversionSource> InnerInsertSource<'a, T> {
+    pub fn new(src: &'a T, index: usize, key: PrefixTruncatedKey<'a>, child: *mut BTreeNode) -> Self {
+        InnerInsertSource { src, index, key, child }
+    }
+}
+
+impl<'a, T: InnerConversionSource> InnerConversionSource for InnerInsertSource<'a, T> {
+    fn fences(&self) -> FenceData {
+        self.src.fences()
+    }
+
+    fn key_count(&self) -> usize {
+        self.src.key_count() + 1
+    }
+
+    fn get_child(&self, index: usize) -> *mut BTreeNode {
+        if index < self.index {
+            self.src.get_child(index)
+        } else if index == self.index {
+            self.child
+        } else {
+            self.src.get_child(index - 1)
+        }
+    }
+
+    fn get_key(&self, index: usize, dst: &mut [u8], strip_prefix: usize) -> Result<usize, ()> {
+        if index < self.index {
+            self.src.get_key(index, dst, strip_prefix)
+        } else if index == self.index {
+            get_key_from_slice(self.key, dst, strip_prefix)
+        } else {
+            self.src.get_key(index - 1, dst, strip_prefix)
+        }
+    }
+
+    fn get_key_length_sum(&self, _range: Range<usize>) -> usize {
+        unimplemented!()
+    }
+
+    fn get_key_length_max(&self, _range: Range<usize>) -> usize {
+        unimplemented!()
+    }
+}

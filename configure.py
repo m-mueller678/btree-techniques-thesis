@@ -10,7 +10,7 @@ FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
     # "inner": ["padded", "basic", "explicit_length", "ascii"],
-    "inner": ["basic"],
+    "inner": ["art"],
     "leaf": ["hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
