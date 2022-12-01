@@ -3,13 +3,13 @@ use crate::{FatTruncatedKey, HeadTruncatedKey, PrefixTruncatedKey};
 use smallvec::SmallVec;
 use crate::btree_node::STRIP_PREFIX;
 
-pub fn head(key: PrefixTruncatedKey) -> (u32, HeadTruncatedKey) {
+pub fn head(key: &[u8]) -> (u32, HeadTruncatedKey) {
     let mut k_padded = [0u8; 4];
-    let head_len = key.0.len().min(4);
-    k_padded[..head_len].copy_from_slice(&key.0[..head_len]);
+    let head_len = key.len().min(4);
+    k_padded[..head_len].copy_from_slice(&key[..head_len]);
     (
         u32::from_be_bytes(k_padded),
-        HeadTruncatedKey(&key.0[head_len..]),
+        HeadTruncatedKey(&key[head_len..]),
     )
 }
 

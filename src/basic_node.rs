@@ -2,12 +2,14 @@ use crate::btree_node::{AdaptionState, BTreeNode, BTreeNodeHead, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
 use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
-use crate::util::{get_key_from_slice, head, MergeFences, partial_restore, reinterpret_mut, short_slice, SmallBuff, SplitFences, trailing_bytes};
+use crate::util::{common_prefix_len, get_key_from_slice, head, MergeFences, partial_restore, reinterpret_mut, short_slice, SmallBuff, SplitFences, trailing_bytes};
 use crate::{FatTruncatedKey, PrefixTruncatedKey};
 use std::mem::{size_of, transmute};
 
 use std::{mem, ptr};
+use std::cmp::Ordering;
 use std::ops::Range;
+use crate::adaptive::{infrequent};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
 
@@ -42,6 +44,7 @@ struct FenceKeySlot {
 }
 
 const HINT_COUNT: usize = 16;
+const DYNAMIC_PREFIX: bool = cfg!(feature = "dynamic-prefix_true");
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -55,6 +58,7 @@ pub struct BasicNodeHead {
     space_used: u16,
     data_offset: u16,
     prefix_len: u16,
+    dynamic_prefix_len: u16,
     hint: [u32; HINT_COUNT],
 }
 
@@ -92,6 +96,7 @@ impl BasicNode {
                 data_offset: PAGE_SIZE as u16,
                 prefix_len: 0,
                 hint: [0; HINT_COUNT],
+                dynamic_prefix_len: 0,
             },
             data: BasicNodeData {
                 bytes: unsafe { mem::zeroed() },
@@ -154,17 +159,31 @@ impl BasicNode {
         unsafe { &mut self.data.slots[..self.head.count as usize] }
     }
 
+    fn dynamic_prefix(&self) -> &[u8] {
+        &self.slots()[0].key(self.as_bytes()).0[..self.head.dynamic_prefix_len as usize]
+    }
+
     pub fn lower_bound(&self, key: PrefixTruncatedKey) -> (usize, bool) {
         if self.head.count == 0 {
             return (0, false);
         }
-        let (head, _) = head(key);
+        if DYNAMIC_PREFIX {
+            if key.0.len() < self.head.dynamic_prefix_len as usize {
+                return (0, false);
+            }
+            match key.0[..self.head.dynamic_prefix_len as usize].cmp(self.dynamic_prefix()) {
+                Ordering::Less => return (0, false),
+                Ordering::Equal => {}
+                Ordering::Greater => return (self.head.count as usize, false),
+            }
+        }
+        let (head, _) = head(&key[self.head.dynamic_prefix_len as usize..]);
         let (lower, upper) = self.search_hint(head);
         let search_result = self.slots()[lower..upper].binary_search_by(|s| {
             let slot_head = s.head;
             slot_head
                 .cmp(&head)
-                .then_with(|| s.key(self.as_bytes()).cmp(&key))
+                .then_with(|| s.key(self.as_bytes()).0[self.head.dynamic_prefix_len as usize..].cmp(&key.0[self.head.dynamic_prefix_len as usize..]))
         });
         match search_result {
             Ok(index) | Err(index) => {
@@ -295,11 +314,11 @@ impl BasicNode {
             ))
         };
         debug_assert_eq!(offset + new_key_len + src_slot.val_len, previous_offset);
-        let (head, _) = head(PrefixTruncatedKey(short_slice(
+        let (head, _) = head(short_slice(
             dst.as_bytes(),
-            offset,
+            offset + dst.head.dynamic_prefix_len,
             new_key_len,
-        )));
+        ));
         dst.push_slot(BasicSlot {
             offset,
             key_len: new_key_len,
@@ -340,7 +359,7 @@ impl BasicNode {
             offset: key_offset,
             key_len: prefix_truncated_key.0.len() as u16,
             val_len: payload.len() as u16,
-            head: head(prefix_truncated_key).0,
+            head: head(&prefix_truncated_key.0[self.head.dynamic_prefix_len as usize..]).0,
         };
     }
 
@@ -458,6 +477,33 @@ impl BasicNode {
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
         PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
     }
+
+    fn maybe_grow_dynamic_prefix(&mut self) {
+        if DYNAMIC_PREFIX {
+            if self.head.count > 1 && infrequent(1 << 15) {
+                let candidate = common_prefix_len(self.slots()[0].key(self.as_bytes()).0, self.slots().last().unwrap().key(self.as_bytes()).0);
+                debug_assert!(candidate >= self.head.dynamic_prefix_len as usize);
+                if self.head.dynamic_prefix_len as usize != candidate {
+                    self.change_dynamic_prefix(candidate)
+                }
+            }
+        }
+    }
+
+    fn change_dynamic_prefix(&mut self, new_len: usize) {
+        eprintln!("{:2}->{:2}", self.head.dynamic_prefix_len, new_len);
+        self.head.dynamic_prefix_len = new_len as u16;
+        let self_bytes = self as *const Self as *mut u8;
+        for s in self.slots_mut() {
+            s.head = head(&unsafe {
+                std::slice::from_raw_parts(
+                    self_bytes.offset(s.offset as isize),
+                    s.key_len as usize,
+                )
+            }[new_len..]).0;
+        }
+        self.make_hint();
+    }
 }
 
 impl InnerConversionSource for BasicNode {
@@ -571,7 +617,7 @@ unsafe impl Node for BasicNode {
                 "{:4}|{:3?}|{:3?}",
                 i,
                 s.head.to_be_bytes(),
-                s.key(self.as_bytes())
+                bstr::BStr::new(s.key(self.as_bytes()).0),
             );
         }
     }
@@ -611,6 +657,7 @@ unsafe impl InnerConversionSink for BasicNode {
         let min_offset = offset - this.free_space();
         unsafe {
             for i in 0..key_count {
+                let dynamic_prefix_len = this.head.dynamic_prefix_len as usize;
                 let bytes = this.as_bytes_mut();
                 let child_bytes = (src.get_child(i) as usize).to_ne_bytes();
                 let val_len = get_key_from_slice(
@@ -622,7 +669,7 @@ unsafe impl InnerConversionSink for BasicNode {
                 offset -= val_len;
                 let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
-                let head = head(PrefixTruncatedKey(&bytes[offset..][..key_len])).0;
+                let head = head(&bytes[offset..][..key_len][dynamic_prefix_len..]).0;
                 this.slots_mut()[old_count + i] = BasicSlot {
                     offset: offset as u16,
                     key_len: key_len as u16,
@@ -689,6 +736,14 @@ impl InnerNode for BasicNode {
     }
 
     unsafe fn insert_child(&mut self, index: usize, key: PrefixTruncatedKey, child: *mut BTreeNode) -> Result<(), ()> {
+        if DYNAMIC_PREFIX {
+            let reset_dynamic_prefix = if self.key_count() == 0 { self.head.dynamic_prefix_len > 0 } else {
+                self.dynamic_prefix() != &key[..self.head.dynamic_prefix_len as usize]
+            };
+            if reset_dynamic_prefix {
+                self.change_dynamic_prefix(0);
+            }
+        }
         self.raw_insert(index, key, &(child as usize).to_ne_bytes());
         Ok(())
     }
@@ -698,7 +753,8 @@ impl InnerNode for BasicNode {
         )
     }
 
-    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+    fn find_child_index(&mut self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+        self.maybe_grow_dynamic_prefix();
         let truncated = self.truncate(key);
         let index = bc.predict().filter(|&i| {
             i <= self.slots().len()
@@ -713,6 +769,8 @@ impl InnerNode for BasicNode {
 
 impl LeafNode for BasicNode {
     fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
+        // leaf nodes have no dynamic prefix
+        debug_assert_eq!(self.head.dynamic_prefix_len, 0);
         if cfg!(feature="strip-prefix_false") {
             assert!(key <= self.fences().upper_fence.0 || self.fences().upper_fence.0.is_empty());
             assert!(key > self.fences().lower_fence.0 || self.fences().lower_fence.0.is_empty());

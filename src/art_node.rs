@@ -395,7 +395,7 @@ impl InnerNode for ArtNode {
         }
     }
 
-    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+    fn find_child_index(&mut self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
         let key = PrefixTruncatedKey(&key[self.head.prefix_len as usize..]);
         let index = bc.predict().filter(|&i| {
             i <= self.key_count()

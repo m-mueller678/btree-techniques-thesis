@@ -20,7 +20,7 @@ pub trait InnerNode: InnerConversionSource + Node {
     /// insert should be called with a string truncated to that length
     fn request_space_for_child(&mut self, key_length: usize) -> Result<usize, ()>;
 
-    fn find_child_index(&self, key: &[u8], branch_cache: &mut BranchCacheAccessor) -> usize;
+    fn find_child_index(&mut self, key: &[u8], branch_cache: &mut BranchCacheAccessor) -> usize;
 }
 
 pub trait SeparableInnerConversionSource: InnerConversionSource {

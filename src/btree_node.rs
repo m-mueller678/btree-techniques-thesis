@@ -102,7 +102,7 @@ impl BTreeNode {
         let mut index = 0;
         bc.reset();
         while self.tag().is_inner() && !filter(self) {
-            index = self.to_inner().find_child_index(key, bc);
+            index = self.to_inner_mut().find_child_index(key, bc);
             parent = self;
             if cfg!(feature = "descend-adapt-inner_10") {
                 if !self.adaption_state().is_adapted() && infrequent(10) {
@@ -138,7 +138,7 @@ impl BTreeNode {
         bc: &mut BranchCacheAccessor,
     ) {
         if self.tag().is_inner() {
-            let this = self.to_inner();
+            let this = self.to_inner_mut();
             let first_child_index = lower_inclusive.map(|k| this.find_child_index(k, bc)).unwrap_or(0);
             let upper_child_index = upper_inclusive.map(|k| this.find_child_index(k, bc));
             let key_count = this.key_count();

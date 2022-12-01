@@ -689,7 +689,7 @@ impl<Head: FullKeyHead> SeparableInnerConversionSource for HeadNode<Head> {
 }
 
 impl<Head: FullKeyHead> InnerNode for HeadNode<Head> {
-    fn find_child_index(&self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
+    fn find_child_index(&mut self, key: &[u8], bc: &mut BranchCacheAccessor) -> usize {
         if self.head.key_count == 0 {
             return 0;
         }
