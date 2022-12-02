@@ -95,7 +95,6 @@ fn bench(op_count: usize,
             }
         } else {
             let mut out = 0;
-            let index = index_distribution.sample(rng);
             unsafe {
                 let has_key = stats[Op::Lookup as usize].time_fn(|| !black_box(tree.lookup(black_box(&mut out), black_box(data[index])).is_null()));
                 if rng.gen_bool(modify_probability) {
