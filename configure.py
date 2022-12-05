@@ -23,6 +23,7 @@ FEATURES = {
     "descend-adapt-inner": ["none"],
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["true", "false"],
+    "basic-use-hint": ["true", "false"],
 }
 
 

@@ -59,6 +59,7 @@ pub struct BasicNodeHead {
     data_offset: u16,
     prefix_len: u16,
     dynamic_prefix_len: u16,
+    #[cfg(feature = "basic-use-hint_true")]
     hint: [u32; HINT_COUNT],
 }
 
@@ -95,6 +96,7 @@ impl BasicNode {
                 space_used: 0,
                 data_offset: PAGE_SIZE as u16,
                 prefix_len: 0,
+                #[cfg(feature = "basic-use-hint_true")]
                 hint: [0; HINT_COUNT],
                 dynamic_prefix_len: 0,
             },
@@ -197,24 +199,29 @@ impl BasicNode {
 
     /// returns half open range
     fn search_hint(&self, head: u32) -> (usize, usize) {
-        debug_assert!(self.head.count > 0);
-        if self.head.count as usize > HINT_COUNT * 2 {
-            let dist = self.head.count as usize / (HINT_COUNT + 1);
-            let pos = (0..HINT_COUNT)
-                .find(|&hi| self.head.hint[hi] >= head)
-                .unwrap_or(HINT_COUNT);
-            let pos2 = (pos..HINT_COUNT)
-                .find(|&hi| self.head.hint[hi] != head)
-                .unwrap_or(HINT_COUNT);
-            (
-                pos * dist,
-                if pos2 < HINT_COUNT {
-                    (pos2 + 1) * dist
-                } else {
-                    self.head.count as usize
-                },
-            )
-        } else {
+        #[cfg(feature = "basic-use-hint_true")]{
+            debug_assert!(self.head.count > 0);
+            if self.head.count as usize > HINT_COUNT * 2 {
+                let dist = self.head.count as usize / (HINT_COUNT + 1);
+                let pos = (0..HINT_COUNT)
+                    .find(|&hi| self.head.hint[hi] >= head)
+                    .unwrap_or(HINT_COUNT);
+                let pos2 = (pos..HINT_COUNT)
+                    .find(|&hi| self.head.hint[hi] != head)
+                    .unwrap_or(HINT_COUNT);
+                (
+                    pos * dist,
+                    if pos2 < HINT_COUNT {
+                        (pos2 + 1) * dist
+                    } else {
+                        self.head.count as usize
+                    },
+                )
+            } else {
+                (0, self.head.count as usize)
+            }
+        }
+        #[cfg(feature = "basic-use-hint_false")]{
             (0, self.head.count as usize)
         }
     }
@@ -380,31 +387,35 @@ impl BasicNode {
     }
 
     fn update_hint(&mut self, slot_id: usize) {
-        let count = self.head.count as usize;
-        let dist = count / (HINT_COUNT + 1);
-        let begin = if (count > HINT_COUNT * 2 + 1)
-            && (((count - 1) / (HINT_COUNT + 1)) == dist)
-            && ((slot_id / dist) > 1)
-        {
-            (slot_id / dist) - 1
-        } else {
-            0
-        };
-        for i in begin..HINT_COUNT {
-            self.head.hint[i] = self.slots()[dist * (i + 1)].head;
-            debug_assert!(i == 0 || self.head.hint[i - 1] <= self.head.hint[i]);
+        #[cfg(feature = "basic-use-hint_true")]{
+            let count = self.head.count as usize;
+            let dist = count / (HINT_COUNT + 1);
+            let begin = if (count > HINT_COUNT * 2 + 1)
+                && (((count - 1) / (HINT_COUNT + 1)) == dist)
+                && ((slot_id / dist) > 1)
+            {
+                (slot_id / dist) - 1
+            } else {
+                0
+            };
+            for i in begin..HINT_COUNT {
+                self.head.hint[i] = self.slots()[dist * (i + 1)].head;
+                debug_assert!(i == 0 || self.head.hint[i - 1] <= self.head.hint[i]);
+            }
         }
     }
 
     fn make_hint(&mut self) {
-        let count = self.head.count as usize;
-        if count == 0 {
-            return;
-        }
-        let dist = count / (HINT_COUNT + 1);
-        for i in 0..HINT_COUNT {
-            self.head.hint[i] = self.slots()[dist * (i + 1)].head;
-            debug_assert!(i == 0 || self.head.hint[i - 1] <= self.head.hint[i]);
+        #[cfg(feature = "basic-use-hint_true")]{
+            let count = self.head.count as usize;
+            if count == 0 {
+                return;
+            }
+            let dist = count / (HINT_COUNT + 1);
+            for i in 0..HINT_COUNT {
+                self.head.hint[i] = self.slots()[dist * (i + 1)].head;
+                debug_assert!(i == 0 || self.head.hint[i - 1] <= self.head.hint[i]);
+            }
         }
     }
 
