@@ -22,9 +22,10 @@ FEATURES = {
     # "descend-adapt-inner": ["1000", "100", "10", "none"],
     "descend-adapt-inner": ["none"],
     "branch-cache": ["false", "true"],
-    "dynamic-prefix": ["true", "false"],
-    "basic-use-hint": ["true", "false"],
-    "basic-prefix": ["false", "true"],
+    "dynamic-prefix": ["false", "true"],
+    "basic-use-hint": ["false", "true"],
+    "basic-prefix": ["true", "false"],
+    "basic-heads": ["false", "true"],
 }
 
 
