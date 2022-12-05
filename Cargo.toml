@@ -39,7 +39,7 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_basic", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false", "dynamic-prefix_true", "basic-use-hint_true"]
+default = ["head-early-abort-create_false", "inner_basic", "leaf_hash", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false", "dynamic-prefix_true", "basic-use-hint_true", "basic-prefix_false"]
 head-early-abort-create_false = []
 inner_basic = []
 leaf_hash = []
@@ -53,3 +53,5 @@ dynamic-prefix_true = []
 dynamic-prefix_false = []
 basic-use-hint_true = []
 basic-use-hint_false = []
+basic-prefix_false = []
+basic-prefix_true = []

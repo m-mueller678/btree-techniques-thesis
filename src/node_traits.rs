@@ -5,7 +5,7 @@ use std::ops::{Deref, Range};
 
 use std::ptr;
 use crate::branch_cache::BranchCacheAccessor;
-use crate::btree_node::STRIP_PREFIX;
+use crate::btree_node::{BASIC_PREFIX, STRIP_PREFIX};
 
 
 pub trait InnerNode: InnerConversionSource + Node {
@@ -83,7 +83,9 @@ impl FenceData<'_> {
     pub fn validate(&self) {
         if cfg!(debug_assertions) {
             assert!(self.lower_fence.0 < self.upper_fence.0 || self.upper_fence.0.is_empty() && self.prefix_len == 0);
-            if STRIP_PREFIX {
+            if !BASIC_PREFIX {
+                assert_eq!(self.prefix_len, 0)
+            } else if STRIP_PREFIX {
                 assert_eq!(common_prefix_len(self.lower_fence.0, self.upper_fence.0), 0)
             } else {
                 assert_eq!(common_prefix_len(self.lower_fence.0, self.upper_fence.0), self.prefix_len)
@@ -114,6 +116,9 @@ pub unsafe extern "C" fn node_print(node: *const BTreeNode) {
 
 impl FenceData<'_> {
     pub fn restrip(self) -> Self {
+        if !BASIC_PREFIX {
+            return self;
+        }
         if STRIP_PREFIX {
             let common = common_prefix_len(self.lower_fence.0, self.upper_fence.0);
             FenceData {

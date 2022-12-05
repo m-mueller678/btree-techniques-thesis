@@ -1,4 +1,4 @@
-use crate::btree_node::{AdaptionState, BTreeNode, BTreeNodeHead, PAGE_SIZE};
+use crate::btree_node::{AdaptionState, BASIC_PREFIX, BTreeNode, BTreeNodeHead, PAGE_SIZE};
 use crate::find_separator::find_separator;
 
 use crate::node_traits::{FenceData, FenceRef, InnerConversionSink, InnerConversionSource, InnerNode, LeafNode, merge, Node, SeparableInnerConversionSource, split_in_place};
@@ -150,7 +150,12 @@ impl BasicNode {
     }
 
     pub fn prefix<'a>(&self, src: &'a [u8]) -> &'a [u8] {
-        &src[..self.head.prefix_len as usize]
+        if BASIC_PREFIX {
+            &src[..self.head.prefix_len as usize]
+        } else {
+            debug_assert_eq!(self.head.prefix_len, 0);
+            &[]
+        }
     }
 
     pub fn slots(&self) -> &[BasicSlot] {
@@ -484,7 +489,12 @@ impl BasicNode {
     }
 
     pub fn truncate<'a>(&self, key: &'a [u8]) -> PrefixTruncatedKey<'a> {
-        PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
+        if BASIC_PREFIX {
+            PrefixTruncatedKey(&key[self.head.prefix_len as usize..])
+        } else {
+            debug_assert_eq!(self.head.prefix_len, 0);
+            PrefixTruncatedKey(&key)
+        }
     }
 
     fn maybe_grow_dynamic_prefix(&mut self) {
@@ -500,7 +510,6 @@ impl BasicNode {
     }
 
     fn change_dynamic_prefix(&mut self, new_len: usize) {
-        eprintln!("{:2}->{:2}", self.head.dynamic_prefix_len, new_len);
         self.head.dynamic_prefix_len = new_len as u16;
         let self_bytes = self as *const Self as *mut u8;
         for s in self.slots_mut() {
