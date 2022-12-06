@@ -263,9 +263,10 @@ public:
     }
 
     u64 count() {
+        static u8 kk[Record::maxFoldLength()];
         static u64 cnt;
         cnt = 0;
-        btree_scan_asc(tree, (u8 const *) &cnt, 0, nullptr, [](u8 const *payload) {
+        btree_scan_asc(tree, (u8 const *) &cnt, 0, kk, [](u8 const *payload) {
             cnt++;
             return true;
         });

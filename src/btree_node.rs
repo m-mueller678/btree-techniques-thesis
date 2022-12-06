@@ -132,33 +132,6 @@ impl BTreeNode {
         (self, parent, index)
     }
 
-
-    /// returns true if all leaf nodes after self are outside range
-    /// bc must be inactive
-    pub fn range_lookup(
-        &mut self,
-        mut lower_inclusive: Option<&[u8]>,
-        upper_inclusive: Option<&[u8]>,
-        callback: &mut dyn FnMut(&[u8]),
-        bc: &mut BranchCacheAccessor,
-    ) {
-        if self.tag().is_inner() {
-            let this = self.to_inner_mut();
-            let first_child_index = lower_inclusive.map(|k| this.find_child_index(k, bc)).unwrap_or(0);
-            let upper_child_index = upper_inclusive.map(|k| this.find_child_index(k, bc));
-            let key_count = this.key_count();
-            for child in first_child_index..upper_child_index.unwrap_or(key_count) + 1 {
-                let last = upper_child_index == Some(child);
-                unsafe {
-                    &mut *this.get_child(child)
-                }.range_lookup(lower_inclusive, upper_inclusive.filter(|_| last), callback, bc);
-                lower_inclusive = None;
-            }
-        } else {
-            self.to_leaf_mut().range_lookup(lower_inclusive, upper_inclusive, callback)
-        }
-    }
-
     pub unsafe fn alloc() -> *mut BTreeNode {
         Box::into_raw(Box::new(BTreeNode::new_uninit()))
     }

@@ -1,7 +1,9 @@
 use std::ops::RangeInclusive;
 use crate::{BTreeNode, PAGE_SIZE};
 use std::ptr;
+use bstr::BStr;
 use crate::branch_cache::BranchCacheAccessor;
+use crate::util::trailing_bytes;
 
 
 pub struct BTree {
@@ -122,9 +124,52 @@ impl BTree {
         true
     }
 
-    pub fn range_lookup(&mut self, range: RangeInclusive<&[u8]>, callback: &mut dyn FnMut(&[u8])) {
-        self.branch_cache.set_inactive();
-        unsafe { &mut *self.root }
-            .range_lookup(Some(range.start()), Some(range.end()), callback, &mut self.branch_cache);
+    pub fn range_lookup(&mut self, mut initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
+        let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
+        start_key_buffer[..initial_start.len()].copy_from_slice(initial_start);
+        let mut start_key_len = initial_start.len();
+
+        loop {
+            self.branch_cache.reset();
+            let mut parent = None;
+            let mut node = unsafe { &mut *self.root };
+            let mut index = 0;
+            let mut key_out_write = key_out;
+            loop {
+                if node.tag().is_inner() {
+                    let node_inner = node.to_inner_mut();
+                    index = node_inner.find_child_index(&start_key_buffer[..start_key_len], &mut self.branch_cache);
+                    let child = unsafe { &mut *node_inner.get_child(index) };
+                    parent = Some(node_inner);
+                    node = child;
+                } else {
+                    unsafe {
+                        if !node.to_leaf_mut().range_lookup(&start_key_buffer[..start_key_len], key_out, callback) {
+                            return;
+                        }
+                        if let Some(p) = parent {
+                            let fence_data = p.fences();
+                            let count = p.key_count();
+                            let upper = if index < count {
+                                let upper_len = p.get_key(index, &mut get_key_buffer, 0).unwrap();
+                                trailing_bytes(&get_key_buffer, upper_len)
+                            } else {
+                                fence_data.upper_fence.to_stripped(fence_data.prefix_len).0
+                            };
+                            if upper.is_empty() {
+                                return;
+                            }
+                            start_key_buffer[fence_data.prefix_len..][..upper.len()].copy_from_slice(upper);
+                            start_key_buffer[fence_data.prefix_len + upper.len()] = 0;
+                            start_key_len = fence_data.prefix_len + upper.len() + 1;
+                        } else {
+                            return;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
     }
 }

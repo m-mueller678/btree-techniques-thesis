@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::hint::black_box;
 use std::io::BufRead;
 use rand::{Rng, RngCore, SeedableRng};
@@ -5,7 +6,7 @@ use rand::distributions::Uniform;
 use rand::distributions::Distribution;
 use rand::prelude::SliceRandom;
 use rand_xoshiro::Xoshiro128PlusPlus;
-use crate::{BTree, ensure_init};
+use crate::{BTree, ensure_init, PAGE_SIZE};
 
 fn build_info() -> (&'static str, &'static str) {
     let header = include_str!("../build-info.h");
@@ -75,6 +76,7 @@ fn bench(op_count: usize,
     let index_distribution = Uniform::new(0, data.len());
     let local_distribution = Uniform::new(0, 20);
     let mut index = 0;
+    let mut range_lookup_key_space = [0u8; PAGE_SIZE];
     for _ in 0..op_count {
         if rng.gen_bool(locality) {
             index = (index + local_distribution.sample(rng)).min(data.len() - 1);
@@ -84,7 +86,22 @@ fn bench(op_count: usize,
         if rng.gen_bool(range_ratio) {
             let range_start = index.saturating_sub(20);
             let mut count = 0;
-            stats[Op::RangeLookup as usize].time_fn(|| black_box(tree.range_lookup(black_box(data[range_start]..=data[index]), black_box(&mut |_| { count += 1; }))));
+            stats[Op::RangeLookup as usize].time_fn(|| black_box(tree.range_lookup(
+                black_box(data[range_start]),
+                black_box(range_lookup_key_space.as_mut_ptr()),
+                black_box(&mut |key_len, _payload| {
+                    match range_lookup_key_space[..key_len].cmp(data[index]) {
+                        Ordering::Less => {
+                            count += 1;
+                            true
+                        }
+                        Ordering::Equal => {
+                            count += 1;
+                            false
+                        }
+                        Ordering::Greater => false,
+                    }
+                }))));
             debug_assert!(count <= index - range_start + 1);
             if cfg!(debug_assertions) {
                 let point_count = data[range_start..=index].iter().filter(|k| {

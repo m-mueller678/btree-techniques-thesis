@@ -45,17 +45,11 @@ pub unsafe trait Node: 'static {
     ) -> Result<(), ()>;
 }
 
-pub trait LeafNode: Node {
+pub unsafe trait LeafNode: Node {
     fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()>;
     fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]>;
     fn remove(&mut self, key: &[u8]) -> Option<()>;
-
-    fn range_lookup(
-        &mut self,
-        lower_inclusive: Option<&[u8]>,
-        upper_inclusive: Option<&[u8]>,
-        callback: &mut dyn FnMut(&[u8]),
-    );
+    unsafe fn range_lookup(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool;
 }
 
 pub trait InnerConversionSource {
@@ -104,6 +98,14 @@ impl<'a> FenceRef<'a> {
             Self(&full[prefix_len..])
         } else {
             Self(full)
+        }
+    }
+
+    pub fn to_stripped(&self, prefix_len: usize) -> PrefixTruncatedKey {
+        if STRIP_PREFIX {
+            PrefixTruncatedKey(self.0)
+        } else {
+            PrefixTruncatedKey(&self.0[prefix_len..])
         }
     }
 }

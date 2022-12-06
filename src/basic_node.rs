@@ -809,7 +809,7 @@ impl InnerNode for BasicNode {
     }
 }
 
-impl LeafNode for BasicNode {
+unsafe impl LeafNode for BasicNode {
     fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()> {
         // leaf nodes have no dynamic prefix
         debug_assert_eq!(self.head.dynamic_prefix_len, 0);
@@ -852,19 +852,17 @@ impl LeafNode for BasicNode {
         Some(())
     }
 
-    fn range_lookup(&mut self, lower_inclusive: Option<&[u8]>, upper_inclusive: Option<&[u8]>, callback: &mut dyn FnMut(&[u8])) {
-        let start_index = lower_inclusive.map(|k| self.lower_bound(self.truncate(k)).0).unwrap_or(0);
-        let end_index_exclusive = upper_inclusive.map(|k| {
-            let (index, found) = self.lower_bound(self.truncate(k));
-            if found {
-                index + 1
-            } else {
-                index
+    unsafe fn range_lookup(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool {
+        debug_assert!(!key_out.is_null());
+        key_out.copy_from_nonoverlapping(start.as_ptr(), self.head.prefix_len as usize);
+        let start_index = self.lower_bound(self.truncate(start)).0;
+        for s in &self.slots()[start_index..] {
+            let k = s.key(self.as_bytes());
+            key_out.offset(self.head.prefix_len as isize).copy_from_nonoverlapping(k.0.as_ptr(), k.0.len());
+            if !callback((s.key_len + self.head.prefix_len) as usize, s.value(self.as_bytes())) {
+                return false;
             }
-        }).unwrap_or(self.key_count());
-        for i in start_index..end_index_exclusive {
-            let s = self.slots()[i];
-            callback(s.value(self.as_bytes()));
         }
+        true
     }
 }
