@@ -621,9 +621,14 @@ impl LeafNode for HashLeaf {
         let key = self.truncate(key);
         self.insert_truncated(key, payload)
     }
-    fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
+    fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]> {
         self.find_index(self.truncate(key))
-            .map(|i| self.slots()[i].value(self.as_bytes()))
+            .map(|i| {
+                let slot = self.slots()[i];
+                unsafe {
+                    &mut self.as_bytes_mut()[(slot.offset + slot.key_len) as usize..][..slot.val_len as usize]
+                }
+            })
     }
 
     fn remove(&mut self, key: &[u8]) -> Option<()> {

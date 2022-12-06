@@ -47,7 +47,7 @@ pub unsafe trait Node: 'static {
 
 pub trait LeafNode: Node {
     fn insert(&mut self, key: &[u8], payload: &[u8]) -> Result<(), ()>;
-    fn lookup(&self, key: &[u8]) -> Option<&[u8]>;
+    fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]>;
     fn remove(&mut self, key: &[u8]) -> Option<()>;
 
     fn range_lookup(

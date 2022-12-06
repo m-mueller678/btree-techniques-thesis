@@ -831,10 +831,13 @@ impl LeafNode for BasicNode {
         Ok(())
     }
 
-    fn lookup(&self, key: &[u8]) -> Option<&[u8]> {
+    fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]> {
         let (index, found) = self.lower_bound(self.truncate(key));
         if found {
-            Some(self.slots()[index].value(self.as_bytes()))
+            let slot = self.slots()[index];
+            unsafe {
+                Some(&mut self.as_bytes_mut()[(slot.offset + slot.key_len) as usize..][..slot.val_len as usize])
+            }
         } else {
             None
         }

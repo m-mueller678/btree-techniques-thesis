@@ -236,7 +236,6 @@ public:
         u8 k[Record::maxFoldLength()];
         u16 l = Record::foldKey(k, key);
         u64 len_out;
-        // TODO this is probably UB. Not sure how immutability guarantees behave across C FFI
         u8 *value_ptr = btree_lookup(tree, k, l, &len_out);
         if (value_ptr) {
             fn(*reinterpret_cast<Record *>(value_ptr));

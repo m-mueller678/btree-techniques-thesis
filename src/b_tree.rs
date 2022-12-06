@@ -32,15 +32,15 @@ impl BTree {
     }
 
     #[tracing::instrument(skip(self))]
-    pub unsafe fn lookup(&mut self, payload_len_out: *mut u64, key: &[u8]) -> *const u8 {
+    pub unsafe fn lookup(&mut self, payload_len_out: *mut u64, key: &[u8]) -> *mut u8 {
         tracing::info!("lookup {key:?}");
         let (node, _, _) = (*self.root).descend(key, |_| false, &mut self.branch_cache);
-        let node = &*node;
-        if let Some(data) = node.to_leaf().lookup(key) {
+        let node = &mut *node;
+        if let Some(data) = node.to_leaf_mut().lookup(key) {
             ptr::write(payload_len_out, data.len() as u64);
-            data.as_ptr()
+            data.as_mut_ptr()
         } else {
-            ptr::null()
+            ptr::null_mut()
         }
     }
 

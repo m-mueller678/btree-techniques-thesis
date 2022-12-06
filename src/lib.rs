@@ -69,7 +69,7 @@ pub unsafe extern "C" fn btree_lookup(
     key: *const u8,
     key_len: u64,
     payload_len_out: *mut u64,
-) -> *const u8 {
+) -> *mut u8 {
     count_op();
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
@@ -97,6 +97,17 @@ pub unsafe extern "C" fn btree_print_info(b_tree: *mut BTree) {
         print_stats(&*b_tree);
     }
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn btree_scan_asc(b_tree: *mut BTree, key: *const u8, key_len: u64, key_buffer: *mut u8, continue_callback: extern "C" fn(*const u8) -> bool) {
+    unimplemented!();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn btree_scan_desc(b_tree: *mut BTree, key: *const u8, key_len: u64, key_buffer: *mut u8, continue_callback: extern "C" fn(*const u8) -> bool) {
+    unimplemented!();
+}
+
 
 #[derive(Ord, PartialOrd, Eq, PartialEq, Copy, Clone, Debug)]
 pub struct PrefixTruncatedKey<'a>(pub &'a [u8]);
