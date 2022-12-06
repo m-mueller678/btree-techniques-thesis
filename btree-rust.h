@@ -17,5 +17,12 @@ bool btree_remove(RustBTree *b_tree, std::uint8_t *key, std::uint64_t keyLen);
 void btree_destroy(RustBTree *b_tree);
 void btree_print_info(RustBTree *b_tree);
 
+// key_buffer may be null
+// key must not be null, even if zero length
+void btree_scan_asc(RustBTree *b_tree, std::uint8_t const *key, std::uint64_t key_len, std::uint8_t *key_buffer,
+                    bool (*continue_callback)(std::uint8_t const *));
+void btree_scan_desc(RustBTree *b_tree, std::uint8_t const *key, std::uint64_t key_len, std::uint8_t *key_buffer,
+                     bool (*continue_callback)(std::uint8_t const *));
+
 }
 #endif //BTREE_BTREE_RUST_H
