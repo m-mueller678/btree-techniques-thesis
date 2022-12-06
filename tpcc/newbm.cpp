@@ -24,7 +24,6 @@
 #include <tbb/parallel_for.h>
 #include <tbb/task_scheduler_init.h>
 
-#include <linux/exmap.h>
 #include "exception_hack.hpp"
 #include "PerfEvent.hpp"
 
@@ -50,11 +49,6 @@ uint64_t rdtsc() {
    uint32_t hi, lo;
    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
    return static_cast<uint64_t>(lo)|(static_cast<uint64_t>(hi)<<32);
-}
-
-static int exmapAction(int exmapfd, exmap_opcode op, u16 len) {
-   struct exmap_action_params params_free = { .interface = workerThreadId, .iov_len = len, .opcode = (u16)op, };
-   return ioctl(exmapfd, EXMAP_IOCTL_ACTION, &params_free);
 }
 
 void* allocHuge(size_t size) {
@@ -603,30 +597,6 @@ BufferManager::BufferManager() : virtSize(envOr("VIRTGB", 16)*gb), physSize(envO
 #ifdef MMAPFILE
    virtMem = (Page*)mmap(NULL, virtAllocSize, PROT_READ|PROT_WRITE, MAP_PRIVATE, blockfd, 0);
 #else
-   useExmap = envOr("EXMAP", 0);
-   if (useExmap) {
-      exmapfd = open("/dev/exmap", O_RDWR);
-      if (exmapfd < 0) die("open exmap");
-
-      struct exmap_ioctl_setup buffer;
-      buffer.fd             = blockfd;
-      buffer.max_interfaces = maxWorkerThreads;
-      buffer.buffer_size    = physCount;
-      buffer.flags          = 0;
-      if (ioctl(exmapfd, EXMAP_IOCTL_SETUP, &buffer) < 0)
-         die("ioctl: exmap_setup");
-
-      for (unsigned i=0; i<maxWorkerThreads; i++) {
-         exmapInterface[i] = (struct exmap_user_interface *) mmap(NULL, pageSize, PROT_READ|PROT_WRITE, MAP_SHARED, exmapfd, EXMAP_OFF_INTERFACE(i));
-         if (exmapInterface[i] == MAP_FAILED)
-            die("setup exmapInterface");
-      }
-
-      virtMem = (Page*)mmap(NULL, virtAllocSize, PROT_READ|PROT_WRITE, MAP_SHARED, exmapfd, 0);
-   } else {
-      virtMem = (Page*)mmap(NULL, virtAllocSize, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-      madvise(virtMem, virtAllocSize, MADV_NOHUGEPAGE);
-   }
 
    pageState = (PageState*)allocHuge(virtCount * sizeof(PageState));
    for (u64 i=0; i<virtCount; i++)
@@ -642,14 +612,6 @@ BufferManager::BufferManager() : virtSize(envOr("VIRTGB", 16)*gb), physSize(envO
    bool faultvirt = envOr("FAULTVIRT", 0);
    if (faultvirt) {
       for (int64_t i=virtCount-1; i>=0; i--) {
-         if (useExmap) {
-            exmapInterface[workerThreadId]->iov[0].page = i;
-            exmapInterface[workerThreadId]->iov[0].len = 1;
-            if (exmapAction(exmapfd, EXMAP_OP_ALLOC, 1) < 0) {
-               cerr << "allocPage errno: " << errno << " pid: " << i << " workerId: " << workerThreadId << endl;
-               throw;
-            }
-         }
 #ifdef MMAPFILE
          virtMem[i].ps.stateAndVersion = 0;
 #endif
@@ -675,7 +637,8 @@ BufferManager::BufferManager() : virtSize(envOr("VIRTGB", 16)*gb), physSize(envO
          }
       });
    }
-   cerr << "vmcache " << "blk:" << path << " virtgb:" << virtSize/gb << " physgb:" << physSize/gb << " exmap:" << useExmap << " fault:" << faultvirt << endl;
+   cerr << "vmcache " << "blk:" << path << " virtgb:" << virtSize / gb << " physgb:" << physSize / gb << " exmap:" << 0
+        << " fault:" << faultvirt << endl;
 }
 
 void BufferManager::ensureFreePages() {
@@ -704,14 +667,6 @@ Page* BufferManager::allocPage() {
    residentSet.insert(pid);
 #endif
 
-   if (useExmap) {
-      exmapInterface[workerThreadId]->iov[0].page = pid;
-      exmapInterface[workerThreadId]->iov[0].len = 1;
-      while (exmapAction(exmapfd, EXMAP_OP_ALLOC, 1) < 0) {
-         cerr << "allocPage errno: " << errno << " pid: " << pid << " workerId: " << workerThreadId << endl;
-         ensureFreePages();
-      }
-   }
    virtMem[pid].dirty = true;
 
    return virtMem + pid;
@@ -783,23 +738,10 @@ void BufferManager::unfixX(PID pid) {
 }
 
 void BufferManager::readPage(PID pid) {
-   if (useExmap) {
-      for (u64 repeatCounter=0; ; repeatCounter++) {
-         int ret = pread(exmapfd, virtMem+pid, pageSize, workerThreadId);
-         if (ret == pageSize) {
-            assert(ret == pageSize);
-            readCount++;
-            return;
-         }
-         cerr << "readPage errno: " << errno << " pid: " << pid << " workerId: " << workerThreadId << endl;
-         ensureFreePages();
-      }
-   } else {
-      int ret = pread(blockfd, virtMem+pid, pageSize, pid*pageSize);
-      assert(virtMem[pid].dirty==false);
-      assert(ret==pageSize);
-      readCount++;
-   }
+    int ret = pread(blockfd, virtMem + pid, pageSize, pid * pageSize);
+    assert(virtMem[pid].dirty == false);
+    assert(ret == pageSize);
+    readCount++;
 }
 
 void BufferManager::evict() {
@@ -843,36 +785,28 @@ void BufferManager::evict() {
    }), toEvict.end());
 
    // 3. try to upgrade lock for dirty page candidates
-   for (auto& pid : toWrite) {
-      PageState& ps = getPageState(pid);
-      u64 v = ps.stateAndVersion;
-      if ((PageState::getState(v) == 1) && ps.stateAndVersion.compare_exchange_weak(v, PageState::sameVersion(v, PageState::Locked)))
-         toEvict.push_back(pid);
-      else
-         ps.unlockS();
-   }
+    for (auto &pid: toWrite) {
+        PageState &ps = getPageState(pid);
+        u64 v = ps.stateAndVersion;
+        if ((PageState::getState(v) == 1) &&
+            ps.stateAndVersion.compare_exchange_weak(v, PageState::sameVersion(v, PageState::Locked)))
+            toEvict.push_back(pid);
+        else
+            ps.unlockS();
+    }
 
-   // 4. remove from page table
-   if (useExmap) {
-      for (u64 i=0; i<toEvict.size(); i++) {
-         exmapInterface[workerThreadId]->iov[i].page = toEvict[i];
-         exmapInterface[workerThreadId]->iov[i].len = 1;
-      }
-      if (exmapAction(exmapfd, EXMAP_OP_FREE, toEvict.size()) < 0)
-         die("ioctl: EXMAP_OP_FREE");
-   } else {
-      for (u64& pid : toEvict)
-         madvise(virtMem + pid, pageSize, MADV_DONTNEED);
-   }
+    // 4. remove from page table
+    for (u64 &pid: toEvict)
+        madvise(virtMem + pid, pageSize, MADV_DONTNEED);
 
-   // 5. remove from hash table and unlock
-   for (u64& pid : toEvict) {
-      bool succ = residentSet.remove(pid);
-      assert(succ);
-      getPageState(pid).unlockXEvicted();
-   }
+    // 5. remove from hash table and unlock
+    for (u64 &pid: toEvict) {
+        bool succ = residentSet.remove(pid);
+        assert(succ);
+        getPageState(pid).unlockXEvicted();
+    }
 
-   physUsedCount -= toEvict.size();
+    physUsedCount -= toEvict.size();
 }
 
 //---------------------------------------------------------------------------
@@ -1788,16 +1722,6 @@ struct vmcacheAdapter
 int main(int argc, char** argv) {
    exception_hack::init_phdr_cache();
 
-   if (bm.useExmap) {
-      struct sigaction action;
-      action.sa_flags = SA_SIGINFO;
-      action.sa_sigaction = handleSEGFAULT;
-      if (sigaction(SIGSEGV, &action, NULL) == -1) {
-         perror("sigusr: sigaction");
-         exit(1);
-      }
-   }
-
    PerfEvent e;
    if (argc != 3) {
       cout << "usage: " << argv[0] << " <threads> <datasize>" << endl;
@@ -1829,69 +1753,6 @@ int main(int argc, char** argv) {
          cout << cnt++ << "," << prog << "," << rmb << "," << wmb << "," << systemName << "," << nthreads << "," << n << "," << (isYcsb?"ycsb":"tpcc") << "," << bm.batch << endl;
       }
    };
-
-   if (isYcsb) {
-      BTree bt;
-      bt.splitOrdered = true;
-
-      {
-         // insert
-         //PerfEventBlock b(e, n);
-         tbb::parallel_for(tbb::blocked_range<u64>(0, n), [&](const tbb::blocked_range<u64>& range) {
-            initWorkerId();
-            array<u8, 120> payload;
-            for (u64 i=range.begin(); i<range.end(); i++) {
-               union { u64 v1; u8 k1[sizeof(u64)]; };
-               v1 = __builtin_bswap64(i);
-               memcpy(payload.data(), k1, sizeof(u64));
-               bt.insert({k1, sizeof(KeyType)}, payload);
-            }
-         });
-      }
-      cerr << "space: " << (bm.allocCount.load()*pageSize)/(float)bm.gb << " GB " << endl;
-
-      bm.readCount = 0;
-      bm.writeCount = 0;
-      vector<thread> threads;
-      threads.emplace_back(statFunction);
-
-      for (unsigned worker=0; worker<nthreads; worker++) {
-         // lookup
-         threads.emplace_back([&,worker]() {
-            workerThreadId = worker;
-            u64 cnt = 0;
-            u64 start = rdtsc();
-            while (keepRunning.load()) {
-               union { u64 v1; u8 k1[sizeof(u64)]; };
-               v1 = __builtin_bswap64(RandomGenerator::getRand<u64>(0, n));
-
-               array<u8, 120> payload;
-               bool succ = bt.lookup({k1, sizeof(u64)}, [&](span<u8> p) {
-                  memcpy(payload.data(), p.data(), p.size());
-               });
-               assert(succ);
-               assert(memcmp(k1, payload.data(), sizeof(u64))==0);
-
-               cnt++;
-               u64 stop = rdtsc();
-               if ((stop-start) > statDiff) {
-                  txProgress += cnt;
-                  start = stop;
-                  cnt = 0;
-               }
-            }
-            txProgress += cnt;
-         });
-      }
-
-      sleep(runForSec);
-      keepRunning = false;
-
-      for (auto& t : threads)
-         t.join();
-
-      return 0;
-   }
 
    // TPC-C
    Integer warehouseCount = n;
