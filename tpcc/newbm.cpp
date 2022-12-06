@@ -171,6 +171,10 @@ struct vmcacheAdapter {
     RustBTree *tree;
 
 public:
+    vmcacheAdapter() {
+        tree = btree_new();
+    }
+
     void scan(const typename Record::Key &key,
               const std::function<bool(const typename Record::Key &, const Record &)> &found_record_cb,
               std::function<void()> reset_if_scan_failed_cb) {
