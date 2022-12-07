@@ -311,7 +311,7 @@ int main(int argc, char **argv) {
         cout << "usage: " << argv[0] << " <threads> <datasize>" << endl;
         exit(1);
     }
-    unsigned nthreads = atoi(argv[1]);
+    unsigned nthreads = 1;
     u64 n = atof(argv[2]);
     tbb::task_scheduler_init init(nthreads);
     u64 runForSec = envOr("RUNFOR", 30);
@@ -374,6 +374,7 @@ int main(int argc, char **argv) {
     }
     */
 
+    std::cerr << "setup complete" << std::endl;
     vector<thread> threads;
 
     for (unsigned worker = 0; worker < nthreads; worker++) {
@@ -400,6 +401,10 @@ int main(int argc, char **argv) {
     keepRunning = false;
     for (auto &t: threads)
         t.join();
+
+    std::cout << txProgress / (double) (runForSec) << std::endl;
+    std::cerr << "tx/sec: " << txProgress / (double) (runForSec) << std::endl;
+    std::cerr << "tx: " << txProgress << std::endl;
 
     return 0;
 }
