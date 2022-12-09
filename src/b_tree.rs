@@ -1,7 +1,5 @@
-use std::ops::RangeInclusive;
 use crate::{BTreeNode, PAGE_SIZE};
 use std::ptr;
-use bstr::BStr;
 use crate::branch_cache::BranchCacheAccessor;
 use crate::util::trailing_bytes;
 
@@ -124,7 +122,7 @@ impl BTree {
         true
     }
 
-    pub fn range_lookup(&mut self, mut initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+    pub fn range_lookup(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
         start_key_buffer[..initial_start.len()].copy_from_slice(initial_start);
@@ -135,7 +133,6 @@ impl BTree {
             let mut parent = None;
             let mut node = unsafe { &mut *self.root };
             let mut index = 0;
-            let mut key_out_write = key_out;
             loop {
                 if node.tag().is_inner() {
                     let node_inner = node.to_inner_mut();
