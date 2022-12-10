@@ -1,7 +1,8 @@
-use crate::{BTreeNode, PAGE_SIZE};
+use crate::{BTreeNode, op_count, PAGE_SIZE};
 use std::ptr;
 use crate::branch_cache::BranchCacheAccessor;
 use crate::util::trailing_bytes;
+use op_count::count_op;
 
 
 pub struct BTree {
@@ -11,6 +12,7 @@ pub struct BTree {
 
 impl BTree {
     pub fn new() -> Self {
+        count_op();
         BTree {
             root: BTreeNode::new_leaf(),
             branch_cache: BranchCacheAccessor::new(),
@@ -19,6 +21,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) {
+        count_op();
         assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
         unsafe {
             let (node, parent, pos) = (&mut *self.root).descend(key, |_| false, &mut self.branch_cache);
@@ -33,6 +36,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     pub unsafe fn lookup(&mut self, payload_len_out: *mut u64, key: &[u8]) -> *mut u8 {
+        count_op();
         tracing::info!("lookup {key:?}");
         let (node, _, _) = (*self.root).descend(key, |_| false, &mut self.branch_cache);
         let node = &mut *node;
@@ -52,6 +56,7 @@ impl BTree {
         key: &[u8],
         index_in_parent: usize,
     ) {
+        count_op();
         if parent.is_null() {
             parent = BTreeNode::new_inner(node);
             self.root = parent;
@@ -89,6 +94,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     pub unsafe fn remove(&mut self, key: &[u8]) -> bool {
+        count_op();
         let mut merge_target: *mut BTreeNode = ptr::null_mut();
         loop {
             let (node, parent, index) = (&mut *self.root).descend(key, |n| n == merge_target, &mut self.branch_cache);
@@ -123,6 +129,7 @@ impl BTree {
     }
 
     pub fn range_lookup(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        count_op();
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
         start_key_buffer[..initial_start.len()].copy_from_slice(initial_start);

@@ -9,7 +9,6 @@ extern crate core;
 
 use crate::btree_node::{BTreeNode, PAGE_SIZE};
 use crate::vtables::init_vtables;
-use crate::op_count::count_op;
 use b_tree::BTree;
 use std::ops::Deref;
 use std::slice;
@@ -43,7 +42,6 @@ pub fn ensure_init() {
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
     ensure_init();
-    count_op();
     Box::leak(Box::new(BTree::new()))
 }
 
@@ -55,7 +53,6 @@ pub unsafe extern "C" fn btree_insert(
     payload: *const u8,
     payload_len: u64,
 ) {
-    count_op();
     BTree::insert(
         &mut *b_tree,
         slice::from_raw_parts(key, key_len as usize),
@@ -70,7 +67,6 @@ pub unsafe extern "C" fn btree_lookup(
     key_len: u64,
     payload_len_out: *mut u64,
 ) -> *mut u8 {
-    count_op();
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
     b_tree.lookup(payload_len_out, key)
@@ -78,7 +74,6 @@ pub unsafe extern "C" fn btree_lookup(
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_len: u64) -> bool {
-    count_op();
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
     b_tree.remove(key)
@@ -86,13 +81,11 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
-    count_op();
     drop(Box::<BTree>::from_raw(b_tree));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_print_info(b_tree: *mut BTree) {
-    count_op();
     if cfg!( debug_assertions ) {
         print_stats(&*b_tree);
     }
@@ -107,7 +100,7 @@ pub unsafe extern "C" fn btree_scan_asc(b_tree: *mut BTree, key: *const u8, key_
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn btree_scan_desc(b_tree: *mut BTree, key: *const u8, key_len: u64, key_buffer: *mut u8, continue_callback: extern "C" fn(*const u8) -> bool) {
+pub unsafe extern "C" fn btree_scan_desc(_b_tree: *mut BTree, _key: *const u8, _key_len: u64, _key_buffer: *mut u8, _continue_callback: extern "C" fn(*const u8) -> bool) {
     //TODO
 }
 

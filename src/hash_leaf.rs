@@ -162,6 +162,7 @@ impl HashLeaf {
     }
 
     fn compactify(&mut self) {
+        // do not validate here, called from insert_truncated with some invariants validated
         //eprintln!("{:?} compactify",self as *const Self);
         let mut buffer = [0u8; PAGE_SIZE];
         let fences_len = self.head.lower_fence.len as usize + self.head.upper_fence.len as usize;
@@ -184,7 +185,6 @@ impl HashLeaf {
             self.as_bytes_mut()[new_data_range.clone()].copy_from_slice(&buffer[new_data_range])
         };
         self.head.data_offset = new_data_offset as u16;
-        self.validate();
     }
 
     #[cfg(feature = "hash_fx")]
@@ -622,6 +622,7 @@ unsafe impl LeafNode for HashLeaf {
         self.insert_truncated(key, payload)
     }
     fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]> {
+        self.validate();
         self.find_index(self.truncate(key))
             .map(|i| {
                 let slot = self.slots()[i];

@@ -60,7 +60,7 @@ impl StatAggregator {
 // prevent inlining to improve perf usability
 #[inline(never)]
 fn init_bench<'a>(value_length: usize, mut data: Vec<Vec<u8>>, bump: &'a Bump, initial_size: usize) -> (BTree, Xoshiro128PlusPlus, Vec<u8>, Vec<&'a [u8]>) {
-    let mut rng = Xoshiro128PlusPlus::from_entropy();
+    let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
     assert!(minstant::is_tsc_available());
     let core_id = core_affinity::get_core_ids().unwrap().choose(&mut rng).cloned().unwrap();
     assert!(core_affinity::set_for_current(core_id));
@@ -103,9 +103,7 @@ fn bench(op_count: usize,
     let mut inserted_count = initial_size;
 
     fn zipf_sample(n: usize, s: f64, rng: &mut Xoshiro128PlusPlus) -> usize {
-        let r = Zipf::new(dbg!(n) as u64, s).unwrap().sample(rng) as usize - 1;
-        debug_assert!(r < n);
-        r
+        Zipf::new(n as u64, s).unwrap().sample(rng) as usize - 1
     }
 
     for _ in 0..op_count {

@@ -5,6 +5,7 @@ use btree::{bench, PrefixTruncatedKey};
 
 
 use std::hint::black_box;
+use std::ptr;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -13,6 +14,7 @@ use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
 use btree::head_node::{AsciiHead, FullKeyHead};
+use btree::node_traits::node_print;
 
 
 pub fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
@@ -111,5 +113,9 @@ pub fn perf<H: FullKeyHead>() {
 }
 
 fn main() {
+    if std::env::var("no-exist-Fn9JyhBOj/9XQvKIXDIOdc5Iu+Y=").is_ok() {
+        // force linker to keep this function, it is useful for debugging
+        unsafe { node_print(ptr::null()) };
+    }
     bench::bench_main();
 }

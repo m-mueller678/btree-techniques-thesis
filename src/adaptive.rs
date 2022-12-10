@@ -7,7 +7,7 @@ use crate::vtables::BTreeNodeTag;
 use rand::distributions::Distribution;
 use rand::rngs::SmallRng;
 
-static mut RAND: Lazy<SmallRng> = Lazy::new(|| SmallRng::from_entropy());
+static mut RAND: Lazy<SmallRng> = Lazy::new(|| SmallRng::seed_from_u64(0x0123456789abcdef));
 
 #[inline]
 pub fn infrequent(infrequency: u32) -> bool {
