@@ -10,12 +10,19 @@ use rand_xoshiro::Xoshiro128PlusPlus;
 use enum_iterator::Sequence;
 use perf_event::{Counter, Group};
 use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
+use serde_json::json;
 use crate::{BTree, ensure_init, PAGE_SIZE};
 
-fn build_info() -> (&'static str, &'static str) {
+fn build_info() -> serde_json::Map<String, serde_json::Value> {
     let header = include_str!("../build-info.h");
     let parts: Vec<_> = header.split('"').collect();
-    (parts[1], parts[3])
+    parts[1].split(",")
+        .map(|s| s.to_owned())
+        .zip(
+            parts[3].split(",")
+                .map(|s| serde_json::Value::String(s.to_owned()))
+        )
+        .filter(|x| !x.0.is_empty()).collect()
 }
 
 #[repr(usize)]
@@ -38,8 +45,13 @@ const VALUE_LEN: usize = 8;
 const RANGE_LEN: usize = 20;
 const ZIPF_EXPONENT: f64 = 0.05;
 
+#[derive(Default)]
 struct StatAggregator {
+    sum: u64,
     count: u64,
+}
+
+struct Perf {
     counter_group: Group,
     task_clock: Counter,
     cycles: Counter,
@@ -50,11 +62,10 @@ struct StatAggregator {
     branch_misses: Counter,
 }
 
-impl Default for StatAggregator {
-    fn default() -> Self {
+impl Perf {
+    fn new() -> Self {
         let mut group = Group::new().unwrap();
-        StatAggregator {
-            count: 0,
+        Perf {
             task_clock: perf_event::Builder::new().group(&mut group).kind(Software::TASK_CLOCK).build().unwrap(),
             cycles: perf_event::Builder::new().group(&mut group).kind(Hardware::CPU_CYCLES).build().unwrap(),
             instructions: perf_event::Builder::new().group(&mut group).kind(Hardware::INSTRUCTIONS).build().unwrap(),
@@ -65,30 +76,31 @@ impl Default for StatAggregator {
             counter_group: group,
         }
     }
+
+    fn to_json(&mut self) -> serde_json::Value {
+        json!({
+            "task_clock":self.task_clock.read().unwrap(),
+            "cycles":self.cycles.read().unwrap(),
+            "instructions":self.instructions.read().unwrap(),
+            "l1d_misses":self.l1d_misses.read().unwrap(),
+            "l1i_misses":self.l1i_misses.read().unwrap(),
+            "ll_misses":self.ll_misses.read().unwrap(),
+            "branch_misses":self.branch_misses.read().unwrap(),
+        })
+    }
 }
 
 impl StatAggregator {
-    fn print_head<'a>(&mut self) -> &str {
-        ",cpu-time,cycles,instr,l1d-misses,l1i-misses,ll-misses,branch-misses"
-    }
-
-    fn print<'a>(&mut self) -> String {
-        format!(",{},{},{},{},{},{},{}",
-                self.task_clock.read().unwrap() as f64 / self.count as f64,
-                self.cycles.read().unwrap() as f64 / self.count as f64,
-                self.instructions.read().unwrap() as f64 / self.count as f64,
-                self.l1d_misses.read().unwrap() as f64 / self.count as f64,
-                self.l1i_misses.read().unwrap() as f64 / self.count as f64,
-                self.ll_misses.read().unwrap() as f64 / self.count as f64,
-                self.branch_misses.read().unwrap() as f64 / self.count as f64,
-        )
+    fn submit(&mut self, sample: u64) {
+        self.sum += sample;
+        self.count += 1;
     }
 
     fn time_fn<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        self.count += 1;
-        self.counter_group.enable().unwrap();
+        let t1 = minstant::Instant::now();
         let r = f();
-        self.counter_group.disable().unwrap();
+        let t2 = minstant::Instant::now();
+        self.submit(t2.duration_since(t1).as_nanos() as u64);
         r
     }
 }
@@ -122,7 +134,7 @@ fn bench(op_count: usize,
          range_length: usize,
          zipf_exponent: f64,
          data: Vec<Vec<u8>>,
-) -> [StatAggregator; Op::CARDINALITY] {
+) -> ([StatAggregator; Op::CARDINALITY], Perf) {
     let bump = Bump::with_capacity(data.iter().map(|s| s.len()).sum());
     let (mut tree, mut rng, payload, shuffled) = init_bench(value_length, data, &bump, initial_size);
     #[cfg(debug_assertions)]
@@ -137,11 +149,13 @@ fn bench(op_count: usize,
     let mut range_lookup_key_out = [0u8; PAGE_SIZE];
     let mut inserted_start = 0usize;
     let mut inserted_count = initial_size;
+    let mut perf = Perf::new();
 
     fn zipf_sample(n: usize, s: f64, rng: &mut Xoshiro128PlusPlus) -> usize {
         Zipf::new(n as u64, s).unwrap().sample(rng) as usize - 1
     }
 
+    perf.counter_group.enable().unwrap();
     for _ in 0..op_count {
         let op = sample_op.sample(rng);
         match enum_iterator::all::<Op>().nth(op).unwrap() {
@@ -218,7 +232,8 @@ fn bench(op_count: usize,
             }
         }
     }
-    stats
+    perf.counter_group.disable().unwrap();
+    (stats, perf)
 }
 
 pub fn bench_main() {
@@ -242,12 +257,32 @@ pub fn bench_main() {
     let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
     assert!(OP_RATES.iter().sum::<usize>() == 100);
     let sample_op = WeightedIndex::new(OP_RATES).unwrap();
-    let mut stats = bench(total_count, sample_op, keys.len() / 2, VALUE_LEN, RANGE_LEN, ZIPF_EXPONENT, keys);
-    let (build_header, build_values) = build_info();
-    println!("bench,op,total_count,op_count{}{}", stats[0].print_head(), build_header);
+    let (stats, mut perf) = bench(total_count, sample_op, keys.len() / 2, VALUE_LEN, RANGE_LEN, ZIPF_EXPONENT, keys);
+    let build_info = build_info().into();
+    let common_info = json!({
+        "data":data_name,
+        "total_count":total_count,
+        "value_len":VALUE_LEN,
+        "range_len":RANGE_LEN,
+        "zipf_exponent":ZIPF_EXPONENT,
+        "op_rates":OP_RATES,
+    });
     for op in enum_iterator::all::<Op>() {
-        let stat = &mut stats[op as usize];
+        let stat = &stats[op as usize];
         let op_count = stat.count;
-        println!("{data_name},{op:?},{total_count},{op_count}{}{}", stat.print(), build_values);
+        let average_time = stat.sum as f64 / stat.count as f64;
+        let op_info = json!({
+            "op": format!("{op:?}"),
+            "op_count": op_count,
+            "time": average_time,
+        });
+        print_joint_objects(&[&build_info, &common_info, &op_info]);
     }
+    let perf_info = perf.to_json();
+    print_joint_objects(&[&build_info, &common_info, &perf_info]);
+}
+
+fn print_joint_objects(objects: &[&serde_json::Value]) {
+    let joint: serde_json::Map<_, _> = objects.iter().flat_map(|o| o.as_object().unwrap().iter()).map(|(s, v)| (s.clone(), v.clone())).collect();
+    println!("{}", serde_json::to_string(&joint).unwrap());
 }
