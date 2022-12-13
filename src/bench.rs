@@ -8,6 +8,8 @@ use rand::prelude::SliceRandom;
 use rand_distr::Zipf;
 use rand_xoshiro::Xoshiro128PlusPlus;
 use enum_iterator::Sequence;
+use perf_event::{Counter, Group};
+use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
 use crate::{BTree, ensure_init, PAGE_SIZE};
 
 fn build_info() -> (&'static str, &'static str) {
@@ -36,23 +38,57 @@ const VALUE_LEN: usize = 8;
 const RANGE_LEN: usize = 20;
 const ZIPF_EXPONENT: f64 = 0.05;
 
-#[derive(Default)]
 struct StatAggregator {
-    sum: u64,
     count: u64,
+    counter_group: Group,
+    task_clock: Counter,
+    cycles: Counter,
+    instructions: Counter,
+    l1d_misses: Counter,
+    l1i_misses: Counter,
+    ll_misses: Counter,
+    branch_misses: Counter,
+}
+
+impl Default for StatAggregator {
+    fn default() -> Self {
+        let mut group = Group::new().unwrap();
+        StatAggregator {
+            count: 0,
+            task_clock: perf_event::Builder::new().group(&mut group).kind(Software::TASK_CLOCK).build().unwrap(),
+            cycles: perf_event::Builder::new().group(&mut group).kind(Hardware::CPU_CYCLES).build().unwrap(),
+            instructions: perf_event::Builder::new().group(&mut group).kind(Hardware::INSTRUCTIONS).build().unwrap(),
+            l1d_misses: perf_event::Builder::new().group(&mut group).kind(Cache { which: WhichCache::L1D, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap(),
+            l1i_misses: perf_event::Builder::new().group(&mut group).kind(Cache { which: WhichCache::L1I, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap(),
+            ll_misses: perf_event::Builder::new().group(&mut group).kind(Hardware::CACHE_MISSES).build().unwrap(),
+            branch_misses: perf_event::Builder::new().group(&mut group).kind(Hardware::BRANCH_MISSES).build().unwrap(),
+            counter_group: group,
+        }
+    }
 }
 
 impl StatAggregator {
-    fn submit(&mut self, sample: u64) {
-        self.sum += sample;
-        self.count += 1;
+    fn print_head<'a>(&mut self) -> &str {
+        ",cpu-time,cycles,instr,l1d-misses,l1i-misses,ll-misses,branch-misses"
+    }
+
+    fn print<'a>(&mut self) -> String {
+        format!(",{},{},{},{},{},{},{}",
+                self.task_clock.read().unwrap() as f64 / self.count as f64,
+                self.cycles.read().unwrap() as f64 / self.count as f64,
+                self.instructions.read().unwrap() as f64 / self.count as f64,
+                self.l1d_misses.read().unwrap() as f64 / self.count as f64,
+                self.l1i_misses.read().unwrap() as f64 / self.count as f64,
+                self.ll_misses.read().unwrap() as f64 / self.count as f64,
+                self.branch_misses.read().unwrap() as f64 / self.count as f64,
+        )
     }
 
     fn time_fn<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        let t1 = minstant::Instant::now();
+        self.count += 1;
+        self.counter_group.enable().unwrap();
         let r = f();
-        let t2 = minstant::Instant::now();
-        self.submit(t2.duration_since(t1).as_nanos() as u64);
+        self.counter_group.disable().unwrap();
         r
     }
 }
@@ -206,13 +242,12 @@ pub fn bench_main() {
     let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
     assert!(OP_RATES.iter().sum::<usize>() == 100);
     let sample_op = WeightedIndex::new(OP_RATES).unwrap();
-    let stats = bench(total_count, sample_op, keys.len() / 2, VALUE_LEN, RANGE_LEN, ZIPF_EXPONENT, keys);
+    let mut stats = bench(total_count, sample_op, keys.len() / 2, VALUE_LEN, RANGE_LEN, ZIPF_EXPONENT, keys);
     let (build_header, build_values) = build_info();
-    println!("bench,op,total_count,op_count,average time{}", build_header);
+    println!("bench,op,total_count,op_count{}{}", stats[0].print_head(), build_header);
     for op in enum_iterator::all::<Op>() {
-        let stat = &stats[op as usize];
-        let average_time = stat.sum as f64 / stat.count as f64;
+        let stat = &mut stats[op as usize];
         let op_count = stat.count;
-        println!("{data_name},{op:?},{total_count},{op_count},{average_time}{}", build_values);
+        println!("{data_name},{op:?},{total_count},{op_count}{}{}", stat.print(), build_values);
     }
 }

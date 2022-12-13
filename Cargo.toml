@@ -25,11 +25,13 @@ minstant = "0.1.2"
 bumpalo = "3.11.1"
 rand_distr = "0.4.3"
 enum-iterator = "1.2.0"
+perf-event = "0.4.8"
 
 [lib]
 crate-type = ["staticlib", "lib"]
 
 [profile.dev]
+opt-level = 3
 
 [profile.release]
 lto = true
