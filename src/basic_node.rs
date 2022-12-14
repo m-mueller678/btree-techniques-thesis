@@ -52,12 +52,12 @@ const DYNAMIC_PREFIX: bool = cfg!(feature = "dynamic-prefix_true");
 pub struct BasicNodeHead {
     head: BTreeNodeHead,
     /// only used in inner nodes, points to last child
-    upper: *mut BTreeNode,
-    lower_fence: FenceKeySlot,
-    upper_fence: FenceKeySlot,
     count: u16,
     space_used: u16,
     data_offset: u16,
+    upper: *mut BTreeNode,
+    lower_fence: FenceKeySlot,
+    upper_fence: FenceKeySlot,
     prefix_len: u16,
     dynamic_prefix_len: u16,
     #[cfg(feature = "basic-use-hint_true")]
