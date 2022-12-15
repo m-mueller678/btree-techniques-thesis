@@ -1,5 +1,6 @@
 use std::hint::black_box;
 use std::io::BufRead;
+use std::process::Command;
 use bumpalo::Bump;
 use rand::{RngCore, SeedableRng};
 use rand::distributions::{WeightedIndex};
@@ -23,6 +24,11 @@ fn build_info() -> serde_json::Map<String, serde_json::Value> {
                 .map(|s| serde_json::Value::String(s.to_owned()))
         )
         .filter(|x| !x.0.is_empty()).collect()
+}
+
+fn host_name() -> String {
+    let out = Command::new("hostname").output().unwrap().stdout;
+    String::from_utf8_lossy(&out).to_string()
 }
 
 #[repr(usize)]
@@ -266,6 +272,7 @@ pub fn bench_main() {
         "range_len":RANGE_LEN,
         "zipf_exponent":ZIPF_EXPONENT,
         "op_rates":OP_RATES,
+        "host": host_name()
     });
     for op in enum_iterator::all::<Op>() {
         let stat = &stats[op as usize];
