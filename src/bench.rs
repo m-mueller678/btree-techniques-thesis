@@ -272,7 +272,8 @@ pub fn bench_main() {
         "range_len":RANGE_LEN,
         "zipf_exponent":ZIPF_EXPONENT,
         "op_rates":OP_RATES,
-        "host": host_name()
+        "host": host_name(),
+        "run_start":  std::time::SystemTime::now()
     });
     for op in enum_iterator::all::<Op>() {
         let stat = &stats[op as usize];

@@ -11,7 +11,7 @@ FEATURES = {
     "head-early-abort-create": ["false"],
     # "inner": ["padded", "basic", "explicit_length", "ascii","art"],
     "inner": ["basic"],
-    "leaf": ["hash"],
+    "leaf": ["basic"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
@@ -21,11 +21,11 @@ FEATURES = {
     "hash": ["crc32"],
     # "descend-adapt-inner": ["1000", "100", "10", "none"],
     "descend-adapt-inner": ["none"],
-    "branch-cache": ["false", "true"],
-    "dynamic-prefix": ["false", "true"],
-    "basic-use-hint": ["true", "false"],
-    "basic-prefix": ["true", "false"],
-    "basic-heads": ["true", "false"],
+    "branch-cache": ["false"],
+    "dynamic-prefix": ["false"],
+    "basic-use-hint": ["false"],
+    "basic-prefix": ["false"],
+    "basic-heads": ["false"],
 }
 
 
@@ -100,7 +100,7 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-# dir = build_all(all_feature_combinations())
-# upload(dir)
-# print_uploaded()
-configure(default_features())
+dir = build_all(all_feature_combinations())
+upload(dir)
+print_uploaded()
+# configure(default_features())
