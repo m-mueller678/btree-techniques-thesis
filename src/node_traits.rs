@@ -110,9 +110,7 @@ impl<'a> FenceRef<'a> {
     }
 }
 
-#[cfg(debug_assertions)]
-#[no_mangle]
-pub unsafe extern "C" fn node_print(node: *const BTreeNode) {
+pub unsafe fn node_print(node: *const BTreeNode) {
     (&*node).print()
 }
 
