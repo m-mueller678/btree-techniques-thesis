@@ -24,7 +24,7 @@ FEATURES = {
     "branch-cache": ["false"],
     "dynamic-prefix": ["false"],
     "basic-use-hint": ["false"],
-    "basic-prefix": ["false"],
+    "basic-prefix": ["false", "true"],
     "basic-heads": ["false"],
 }
 
