@@ -105,8 +105,6 @@ impl StatAggregator {
 fn init_bench<'a>(value_length: usize, mut data: Vec<Vec<u8>>, bump: &'a Bump, initial_size: usize) -> (BTree, Xoshiro128PlusPlus, Vec<u8>, Vec<&'a [u8]>) {
     let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
     assert!(minstant::is_tsc_available());
-    let core_id = core_affinity::get_core_ids().unwrap().choose(&mut rng).cloned().unwrap();
-    assert!(core_affinity::set_for_current(core_id));
 
     let mut value = vec![0u8; value_length];
     rng.fill_bytes(&mut value);
