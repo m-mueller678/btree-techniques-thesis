@@ -1,14 +1,14 @@
 set -e
 
-OUT="$HOME/common_out.out"
+OUT="$HOME/basic_opt.out"
 touch $OUT
 
 cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {1..40}
+for i in {1..10}
 do
-OP_COUNT=1e9 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;
-OP_COUNT=1e9 INT=2e7 find . -name 'btree-*' -exec {} >> $OUT \;
+find . -name 'btree-*'| xargs -n1 -P4 env OP_COUNT=1e9 FILE="$HOME/data/urls"
+find . -name 'btree-*'| xargs -n1 -P4 env OP_COUNT=1e9 INT=2e7
 done

@@ -1,3 +1,4 @@
+import copy
 import shutil
 import subprocess
 from datetime import datetime
@@ -16,16 +17,16 @@ FEATURES = {
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
     # "strip-prefix": ["true", "false"],
-    "strip-prefix": ["false"],
+    "strip-prefix": ["false", "true"],
     # "hash": ["crc32","wyhash", "fx"],
     "hash": ["crc32"],
-    # "descend-adapt-inner": ["1000", "100", "10", "none"],
-    "descend-adapt-inner": ["none"],
-    "branch-cache": ["false"],
-    "dynamic-prefix": ["false"],
-    "basic-use-hint": ["false"],
+    "descend-adapt-inner": ["none", "1000", "100", "10"],
+    "branch-cache": ["false", "true"],
+    "dynamic-prefix": ["false", "true"],
+
+    "basic-use-hint": ["false", "true"],
     "basic-prefix": ["false", "true"],
-    "basic-heads": ["false"],
+    "basic-heads": ["false", "true"],
 }
 
 
@@ -100,7 +101,23 @@ def print_uploaded():
     print(f"ssh -f {HOST} 'nohup bash cp-target/run_all.sh'")
 
 
-dir = build_all(all_feature_combinations())
+features = default_features()
+cases = [copy.deepcopy(features)]
+
+
+def set_feature(k, v):
+    assert k in features
+    assert v in FEATURES[k]
+    features[k] = v
+    cases.append(copy.deepcopy(features))
+
+
+set_feature('basic-prefix', 'true')
+set_feature('basic-heads', 'true')
+set_feature('basic-use-hint', 'true')
+assert len(cases) == 4
+
+dir = build_all(cases)
 upload(dir)
 print_uploaded()
 # configure(default_features())
