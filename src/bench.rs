@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::hint::black_box;
 use std::io::BufRead;
 use std::process::Command;
@@ -58,41 +59,29 @@ struct StatAggregator {
 }
 
 struct Perf {
-    counter_group: Group,
-    task_clock: Counter,
-    cycles: Counter,
-    instructions: Counter,
-    l1d_misses: Counter,
-    l1i_misses: Counter,
-    ll_misses: Counter,
-    branch_misses: Counter,
+    counters: Vec<(&'static str, Counter)>,
 }
 
 impl Perf {
     fn new() -> Self {
-        let mut group = Group::new().unwrap();
-        Perf {
-            task_clock: perf_event::Builder::new().group(&mut group).kind(Software::TASK_CLOCK).build().unwrap(),
-            cycles: perf_event::Builder::new().group(&mut group).kind(Hardware::CPU_CYCLES).build().unwrap(),
-            instructions: perf_event::Builder::new().group(&mut group).kind(Hardware::INSTRUCTIONS).build().unwrap(),
-            l1d_misses: perf_event::Builder::new().group(&mut group).kind(Cache { which: WhichCache::L1D, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap(),
-            l1i_misses: perf_event::Builder::new().group(&mut group).kind(Cache { which: WhichCache::L1I, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap(),
-            ll_misses: perf_event::Builder::new().group(&mut group).kind(Hardware::CACHE_MISSES).build().unwrap(),
-            branch_misses: perf_event::Builder::new().group(&mut group).kind(Hardware::BRANCH_MISSES).build().unwrap(),
-            counter_group: group,
-        }
+        let mut counters = Vec::new();
+        counters.push(("task_clock", perf_event::Builder::new().kind(Software::TASK_CLOCK).build().unwrap()));
+        counters.push(("cycles", perf_event::Builder::new().kind(Hardware::CPU_CYCLES).build().unwrap()));
+        counters.push(("instructions", perf_event::Builder::new().kind(Hardware::INSTRUCTIONS).build().unwrap()));
+        counters.push(("l1d_misses", perf_event::Builder::new().kind(Cache { which: WhichCache::L1D, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap()));
+        counters.push(("l1i_misses", perf_event::Builder::new().kind(Cache { which: WhichCache::L1I, operation: CacheOp::READ, result: CacheResult::MISS }).build().unwrap()));
+        counters.push(("ll_misses", perf_event::Builder::new().kind(Hardware::CACHE_MISSES).build().unwrap()));
+        counters.push(("branch_misses", perf_event::Builder::new().kind(Hardware::BRANCH_MISSES).build().unwrap()));
+        Self { counters }
+    }
+
+    fn read_counter(c: &mut Counter) -> f64 {
+        let x = c.read_count_and_time().unwrap();
+        x.count as f64 * (x.time_enabled as f64 / x.time_running as f64)
     }
 
     fn to_json(&mut self) -> serde_json::Value {
-        json!({
-            "task_clock":self.task_clock.read().unwrap(),
-            "cycles":self.cycles.read().unwrap(),
-            "instructions":self.instructions.read().unwrap(),
-            "l1d_misses":self.l1d_misses.read().unwrap(),
-            "l1i_misses":self.l1i_misses.read().unwrap(),
-            "ll_misses":self.ll_misses.read().unwrap(),
-            "branch_misses":self.branch_misses.read().unwrap(),
-        })
+        serde_json::Value::Object(self.counters.iter_mut().map(|(n, c)| (n.to_string(), Self::read_counter(c).into())).collect())
     }
 }
 
@@ -161,7 +150,9 @@ fn bench(op_count: usize,
         Zipf::new(n as u64, s).unwrap().sample(rng) as usize - 1
     }
 
-    perf.counter_group.enable().unwrap();
+    for c in &mut perf.counters {
+        c.1.enable().unwrap();
+    }
     for _ in 0..op_count {
         let op = sample_op.sample(rng);
         match enum_iterator::all::<Op>().nth(op).unwrap() {
@@ -238,7 +229,9 @@ fn bench(op_count: usize,
             }
         }
     }
-    perf.counter_group.disable().unwrap();
+    for c in &mut perf.counters {
+        c.1.disable().unwrap();
+    }
     (stats, perf)
 }
 
