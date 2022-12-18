@@ -304,7 +304,7 @@ pub fn bench_main() {
     let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
     let value_len: usize = std::env::var("VALUE_LEN").as_deref().unwrap_or("8").parse().unwrap();
     let range_len: usize = std::env::var("RANGE_LEN").as_deref().unwrap_or("10").parse().unwrap();
-    let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("10").parse().unwrap();
+    let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("0.15").parse().unwrap();
     let op_rates: Vec<usize> = serde_json::from_str(std::env::var("OP_RATES").as_deref().unwrap_or("[40,40,5,5,5,5]")).unwrap();
     assert!(op_rates.len() == 6);
     let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
