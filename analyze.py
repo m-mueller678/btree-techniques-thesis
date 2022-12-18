@@ -30,11 +30,17 @@ def default_pivot(dt, aggregate=[]):
 def load(f):
     dt = pd.read_json(f, lines=True)
     dt['op_rates'] = dt['op_rates'].map(lambda x: ':'.join(str(r) for r in x))
+    for k in ['branch_misses', 'cycles', 'instructions', 'l1d_misses', 'l1i_misses', 'll_misses', 'task_clock']:
+        dt[k] = dt[k] / dt['total_count']
     dt['host'] = dt['host'].map(lambda x: x.strip())
     return dt
 
 
 path = sys.argv[1] if len(sys.argv) > 1 else 'out.out'
+
+dt = load(path)
+# dt = dt[(dt['basic-heads'] == 'false') & (dt['basic-prefix'] == 'false') & (dt['basic-use-hint'] == 'false')]
 print(
-    default_pivot(load(path), ['op'])
+    default_pivot(dt, ['op']),
+    default_pivot(dt),
 )
