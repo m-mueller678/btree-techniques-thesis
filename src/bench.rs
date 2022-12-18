@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hint::black_box;
 use std::io::BufRead;
 use std::process::Command;
+use std::ptr;
 use bumpalo::Bump;
 use rand::{RngCore, SeedableRng};
 use rand::distributions::{WeightedIndex};
@@ -13,7 +14,7 @@ use enum_iterator::Sequence;
 use perf_event::{Counter, Group};
 use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
 use serde_json::json;
-use crate::{BTree, ensure_init, PAGE_SIZE};
+use crate::{BTree, btree_print_info, ensure_init, PAGE_SIZE};
 
 fn build_info() -> serde_json::Map<String, serde_json::Value> {
     let header = include_str!("../build-info.h");
@@ -42,15 +43,6 @@ enum Op {
     Remove,
     Range,
 }
-
-const OP_RATES: [usize; 6] = [
-    40, 40,
-    5, 5,
-    5, 5,
-];
-const VALUE_LEN: usize = 8;
-const RANGE_LEN: usize = 20;
-const ZIPF_EXPONENT: f64 = 0.05;
 
 #[derive(Default)]
 struct StatAggregator {
@@ -100,138 +92,195 @@ impl StatAggregator {
     }
 }
 
-// prevent inlining to improve perf usability
-#[inline(never)]
-fn init_bench<'a>(value_length: usize, mut data: Vec<Vec<u8>>, bump: &'a Bump, initial_size: usize) -> (BTree, Xoshiro128PlusPlus, Vec<u8>, Vec<&'a [u8]>) {
-    let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
-    assert!(minstant::is_tsc_available());
-
-    let mut value = vec![0u8; value_length];
-    rng.fill_bytes(&mut value);
-    let mut tree = BTree::new();
-    data.shuffle(&mut rng);
-    let mut shuffled = Vec::new();
-    for k in data {
-        shuffled.push(&*bump.alloc_slice_copy(&k));
-    }
-    for x in &shuffled[..initial_size] {
-        tree.insert(x, &value);
-    }
-    (tree, rng, value, shuffled)
-}
-
-fn bench(op_count: usize,
-         sample_op: WeightedIndex<usize>,
-         initial_size: usize,
-         value_length: usize,
-         range_length: usize,
-         zipf_exponent: f64,
-         data: Vec<Vec<u8>>,
-) -> ([StatAggregator; Op::CARDINALITY], Perf) {
-    let bump = Bump::with_capacity(data.iter().map(|s| s.len()).sum());
-    let (mut tree, mut rng, payload, shuffled) = init_bench(value_length, data, &bump, initial_size);
+struct Bench {
+    stats: [StatAggregator; Op::CARDINALITY],
+    sample_op: WeightedIndex<usize>,
+    instruction_buffer: Vec<u8>,
+    initial_size: usize,
+    value_length: usize,
+    range_length: usize,
+    zipf_exponent: f64,
+    inserted_start: usize,
+    inserted_count: usize,
+    data: Vec<Vec<u8>>,
+    payload: Vec<u8>,
+    perf: Perf,
+    rng: Xoshiro128PlusPlus,
+    tree: BTree,
     #[cfg(debug_assertions)]
-        let mut std_set = std::collections::btree_set::BTreeSet::new();
-    #[cfg(debug_assertions)]{
-        for k in &shuffled[..initial_size] {
-            std_set.insert(*k);
-        }
-    }
-    let rng = &mut rng;
-    let mut stats: [StatAggregator; Op::CARDINALITY] = Default::default();
-    let mut range_lookup_key_out = [0u8; PAGE_SIZE];
-    let mut inserted_start = 0usize;
-    let mut inserted_count = initial_size;
-    let mut perf = Perf::new();
-
-    fn zipf_sample(n: usize, s: f64, rng: &mut Xoshiro128PlusPlus) -> usize {
-        Zipf::new(n as u64, s).unwrap().sample(rng) as usize - 1
-    }
-
-    for c in &mut perf.counters {
-        c.1.enable().unwrap();
-    }
-    for _ in 0..op_count {
-        let op = sample_op.sample(rng);
-        match enum_iterator::all::<Op>().nth(op).unwrap() {
-            Op::Hit => {
-                let index = (inserted_start + inserted_count - 1 - zipf_sample(inserted_count, zipf_exponent, rng)) % shuffled.len();
-                let mut out = 0;
-                let found = unsafe {
-                    stats[op].time_fn(||
-                        black_box(tree.lookup(black_box(&mut out), black_box(shuffled[index])))
-                    )
-                };
-                debug_assert!(!found.is_null());
-            }
-            Op::Miss => {
-                let index = (inserted_start + inserted_count + zipf_sample(shuffled.len() - inserted_count, zipf_exponent, rng)) % shuffled.len();
-                let mut out = 0;
-                let found = unsafe {
-                    stats[op].time_fn(||
-                        black_box(tree.lookup(black_box(&mut out), black_box(shuffled[index])))
-                    )
-                };
-                debug_assert!(found.is_null());
-            }
-            Op::Update => {
-                let index = (inserted_start + inserted_count - 1 - zipf_sample(inserted_count, zipf_exponent, rng)) % shuffled.len();
-                stats[op].time_fn(||
-                    black_box(tree.insert(black_box(shuffled[index]), black_box(&payload)))
-                );
-            }
-            Op::Insert => {
-                let index = (inserted_start + inserted_count) % shuffled.len();
-                assert!(inserted_count < shuffled.len());
-                inserted_count += 1;
-                stats[op].time_fn(||
-                    black_box(tree.insert(black_box(shuffled[index]), black_box(&payload)))
-                );
-                #[cfg(debug_assertions)]{
-                    std_set.insert(&shuffled[index]);
-                }
-            }
-            Op::Remove => {
-                let index = inserted_start;
-                assert!(inserted_count > 0);
-                inserted_count -= 1;
-                inserted_start = (inserted_start + 1) % shuffled.len();
-                let found = unsafe {
-                    stats[op].time_fn(||
-                        black_box(tree.remove(black_box(shuffled[index])))
-                    )
-                };
-                #[cfg(debug_assertions)]{
-                    std_set.remove(&shuffled[index]);
-                }
-                debug_assert!(found);
-            }
-            Op::Range => {
-                let index = (inserted_start + inserted_count - 1 - zipf_sample(inserted_count, zipf_exponent, rng)) % shuffled.len();
-                #[cfg(debug_assertions)]
-                    let expected: Vec<&[u8]> = std_set.range(shuffled[index]..).take(range_length).cloned().collect();
-                let mut count = 0;
-                stats[op].time_fn(||
-                    black_box(
-                        tree.range_lookup(&shuffled[index], range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
-                            #[cfg(debug_assertions)]{
-                                assert!(expected[count] == &range_lookup_key_out[..key_len])
-                            }
-                            count += 1;
-                            count < range_length
-                        })
-                    ));
-                #[cfg(debug_assertions)]{
-                    assert!(count == expected.len());
-                }
-            }
-        }
-    }
-    for c in &mut perf.counters {
-        c.1.disable().unwrap();
-    }
-    (stats, perf)
+    std_set: BTreeSet<Vec<u8>>,
 }
+
+impl Bench {
+    fn init(
+        sample_op: WeightedIndex<usize>,
+        initial_size: usize,
+        value_length: usize,
+        range_length: usize,
+        zipf_exponent: f64,
+        mut data: Vec<Vec<u8>>,
+    ) -> Self {
+        let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
+        assert!(minstant::is_tsc_available());
+
+        let mut value = vec![0u8; value_length];
+        rng.fill_bytes(&mut value);
+        let mut tree = BTree::new();
+        data.shuffle(&mut rng);
+        for x in &data[..initial_size] {
+            tree.insert(x, &value);
+        }
+        unsafe { btree_print_info(&mut tree) };
+        Bench {
+            stats: Default::default(),
+            sample_op,
+            instruction_buffer: Vec::new(),
+            initial_size,
+            value_length,
+            range_length,
+            zipf_exponent,
+            inserted_start: 0,
+            inserted_count: initial_size,
+            #[cfg(debug_assertions)]
+            std_set: {
+                let mut s = BTreeSet::new();
+                for x in &data[..initial_size] {
+                    s.insert(x.clone());
+                }
+                s
+            },
+            data,
+            payload: value,
+            perf: Perf::new(),
+            rng,
+            tree,
+        }
+    }
+
+    fn zipf_sample(&mut self, n: usize) -> usize {
+        assert!(n > 0);
+        Zipf::new(n as u64, self.zipf_exponent).unwrap().sample(&mut self.rng) as usize - 1
+    }
+
+    fn op_from_usize(n: usize) -> Op {
+        let op_enum = enum_iterator::all::<Op>().nth(n).unwrap();
+        assert!(op_enum as usize == n);
+        op_enum
+    }
+
+    fn run_buffered(&mut self) {
+        let mut i = 0;
+        for c in &mut self.perf.counters {
+            c.1.enable().unwrap();
+        }
+        let mut range_lookup_key_out = [0u8; PAGE_SIZE];
+        while i < self.instruction_buffer.len() {
+            let op = Self::op_from_usize(self.instruction_buffer[i] as usize);
+            let len = self.instruction_buffer[i + 1] as usize;
+            let key = &self.instruction_buffer[i + 2..][..len];
+            i += len + 2;
+            match op {
+                Op::Hit => {
+                    let mut out = 0;
+                    let found = unsafe {
+                        self.stats[op as usize].time_fn(||
+                            black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
+                        )
+                    };
+                    debug_assert!(!found.is_null());
+                }
+                Op::Miss => {
+                    let mut out = 0;
+                    let found = unsafe {
+                        self.stats[op as usize].time_fn(||
+                            black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
+                        )
+                    };
+                    debug_assert!(found.is_null());
+                }
+                Op::Update => {
+                    self.stats[op as usize].time_fn(||
+                        black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
+                    );
+                }
+                Op::Insert => {
+                    self.stats[op as usize].time_fn(||
+                        black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
+                    );
+                    #[cfg(debug_assertions)]{
+                        self.std_set.insert(key.to_owned());
+                    }
+                }
+                Op::Remove => {
+                    let found = unsafe {
+                        self.stats[op as usize].time_fn(||
+                            black_box(self.tree.remove(black_box(key)))
+                        )
+                    };
+                    #[cfg(debug_assertions)]{
+                        self.std_set.remove(key);
+                    }
+                    debug_assert!(found);
+                }
+                Op::Range => {
+                    #[cfg(debug_assertions)]
+                        let expected: Vec<&Vec<u8>> = self.std_set.range(key.to_owned()..).take(self.range_length).collect();
+                    let mut count = 0;
+                    self.stats[op as usize].time_fn(||
+                        black_box(
+                            self.tree.range_lookup(&key, range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
+                                #[cfg(debug_assertions)]{
+                                    assert!(expected[count] == &range_lookup_key_out[..key_len])
+                                }
+                                count += 1;
+                                count < self.range_length
+                            })
+                        ));
+                    #[cfg(debug_assertions)]{
+                        assert!(count == expected.len());
+                    }
+                }
+            }
+        }
+        for c in &mut self.perf.counters {
+            c.1.disable().unwrap();
+        }
+        debug_assert!(i == self.instruction_buffer.len());
+        self.instruction_buffer.clear();
+    }
+
+    fn run(mut self, op_count: usize) -> ([StatAggregator; Op::CARDINALITY], Perf) {
+        for _ in 0..op_count {
+            let op = self.sample_op.sample(&mut self.rng);
+            let index = match Self::op_from_usize(op) {
+                Op::Hit | Op::Update | Op::Range => (self.inserted_start + self.inserted_count - 1 - self.zipf_sample(self.inserted_count)) % self.data.len(),
+                Op::Miss => (self.inserted_start + self.inserted_count + self.zipf_sample(self.data.len() - self.inserted_count)) % self.data.len(),
+                Op::Insert => {
+                    let index = (self.inserted_start + self.inserted_count) % self.data.len();
+                    self.inserted_count += 1;
+                    index
+                }
+                Op::Remove => {
+                    let index = self.inserted_start;
+                    self.inserted_count -= 1;
+                    self.inserted_start = (self.inserted_start + 1) % self.data.len();
+                    index
+                }
+            };
+            self.instruction_buffer.push(op as u8);
+            self.instruction_buffer.push(self.data[index].len().try_into().unwrap());
+            self.instruction_buffer.extend_from_slice(&self.data[index]);
+            const INSTRUCTION_BUFFER_SIZE: usize = if cfg!(debug_assertions) { 1 } else { 100_000 };
+            if self.instruction_buffer.len() >= INSTRUCTION_BUFFER_SIZE {
+                self.run_buffered();
+            }
+        }
+        self.run_buffered();
+        unsafe { btree_print_info(&mut self.tree) };
+        (self.stats, self.perf)
+    }
+}
+
 
 pub fn bench_main() {
     ensure_init();
@@ -251,18 +300,24 @@ pub fn bench_main() {
         data = Some((file.lines().map(|l| { l.unwrap().into_bytes() }).collect(), format!("FILE-{}", var)));
     }
     let (keys, data_name) = data.expect("no bench");
+
     let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
-    assert!(OP_RATES.iter().sum::<usize>() == 100);
-    let sample_op = WeightedIndex::new(OP_RATES).unwrap();
-    let (stats, mut perf) = bench(total_count, sample_op, keys.len() / 2, VALUE_LEN, RANGE_LEN, ZIPF_EXPONENT, keys);
+    let value_len: usize = std::env::var("VALUE_LEN").as_deref().unwrap_or("8").parse().unwrap();
+    let range_len: usize = std::env::var("RANGE_LEN").as_deref().unwrap_or("10").parse().unwrap();
+    let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("10").parse().unwrap();
+    let op_rates: Vec<usize> = serde_json::from_str(std::env::var("OP_RATES").as_deref().unwrap_or("[40,40,5,5,5,5]")).unwrap();
+    assert!(op_rates.len() == 6);
+    let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
+
+    let (stats, mut perf) = Bench::init(sample_op, keys.len() / 2, value_len, range_len, zipf_exponent, keys).run(total_count);
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
         "total_count":total_count,
-        "value_len":VALUE_LEN,
-        "range_len":RANGE_LEN,
-        "zipf_exponent":ZIPF_EXPONENT,
-        "op_rates":OP_RATES,
+        "value_len":value_len,
+        "range_len":range_len,
+        "zipf_exponent":zipf_exponent,
+        "op_rates":op_rates,
         "host": host_name(),
         "run_start":  std::time::SystemTime::now()
     });
