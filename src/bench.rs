@@ -176,9 +176,10 @@ impl Bench {
         let mut range_lookup_key_out = [0u8; PAGE_SIZE];
         while i < self.instruction_buffer.len() {
             let op = Self::op_from_usize(self.instruction_buffer[i] as usize);
-            let len = self.instruction_buffer[i + 1] as usize;
-            let key = &self.instruction_buffer[i + 2..][..len];
-            i += len + 2;
+            let len_bytes: &[u8; 2] = self.instruction_buffer[i + 1..][..2].try_into().unwrap();
+            let len = u16::from_ne_bytes(*len_bytes) as usize;
+            let key = &self.instruction_buffer[i + 3..][..len];
+            i += len + 3;
             match op {
                 Op::Hit => {
                     let mut out = 0;
@@ -268,7 +269,7 @@ impl Bench {
                 }
             };
             self.instruction_buffer.push(op as u8);
-            self.instruction_buffer.push(self.data[index].len().try_into().unwrap());
+            self.instruction_buffer.extend_from_slice(&(self.data[index].len() as u16).to_ne_bytes());
             self.instruction_buffer.extend_from_slice(&self.data[index]);
             const INSTRUCTION_BUFFER_SIZE: usize = if cfg!(debug_assertions) { 1 } else { 100_000 };
             if self.instruction_buffer.len() >= INSTRUCTION_BUFFER_SIZE {
