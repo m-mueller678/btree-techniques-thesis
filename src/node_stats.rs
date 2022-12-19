@@ -10,7 +10,7 @@ pub struct InnerNodeData {
     pub tag: BTreeNodeTag,
 }
 
-fn total_node_count(stats: &[InnerNodeData]) -> usize {
+pub fn total_node_count(stats: &[InnerNodeData]) -> usize {
     let max_depth = stats.iter().map(|n| n.depth).max().unwrap();
     let leaf_count: usize = stats.iter().filter(|n| n.depth == max_depth).map(|n| n.keys.len() + 1).sum();
     let lc2 = stats.iter().map(|n| n.keys.len() + 1).sum::<usize>() + 1;

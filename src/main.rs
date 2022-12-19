@@ -1,21 +1,25 @@
 #![feature(is_sorted)]
 
 
-use btree::{bench, PrefixTruncatedKey};
+use btree::{bench, ensure_init, PrefixTruncatedKey};
 
 
 use std::hint::black_box;
-use std::ptr;
+use std::{fs, ptr};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::time::{Duration, Instant};
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng, thread_rng};
+use rand::prelude::SliceRandom;
 use rand_xoshiro::Xoshiro128PlusPlus;
+use serde_json::json;
 use smallvec::SmallVec;
+use btree::b_tree::BTree;
 use btree::head_node::{AsciiHead, FullKeyHead};
+use btree::node_stats::{btree_to_inner_node_stats, total_node_count};
 use btree::node_traits::node_print;
-
+use rayon::prelude::*;
 
 pub fn test_head<H: FullKeyHead>(rng: &mut impl Rng, max_fence_len: usize) {
     let mut buffer = [0u8; 1 << 9];
@@ -113,9 +117,24 @@ pub fn perf<H: FullKeyHead>() {
 }
 
 fn main() {
-    if std::env::var("no-exist-Fn9JyhBOj/9XQvKIXDIOdc5Iu+Y=").is_ok() {
-        // force linker to keep this function, it is useful for debugging
-        unsafe { node_print(ptr::null()) };
-    }
-    bench::bench_main();
+    ensure_init();
+    let data = std::env::args().nth(1).unwrap();
+    let data_content = fs::read_to_string(format!("data/{}", data)).unwrap();
+    let mut keys: Vec<&str> = data_content.split('\n').collect();
+    keys.shuffle(&mut thread_rng());
+    (1..=15).into_par_iter().for_each(|p| {
+        let mut tree = BTree::new();
+        let value_len = 1.5f64.powi(p).floor() as usize;
+        let value = vec![0u8; value_len];
+        for k in &keys {
+            tree.insert(k.as_bytes(), &value);
+        }
+        let stats = btree_to_inner_node_stats(&tree);
+        let node_count = total_node_count(&stats);
+        for k in &keys {
+            // drop is not implemented, remove to avoid memory leaks
+            unsafe { assert!(tree.remove(k.as_bytes())) };
+        }
+        println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data,"node_count":node_count,"prefix-truncation":true})).unwrap());
+    });
 }
