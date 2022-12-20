@@ -27,6 +27,7 @@ rand_distr = "0.4.3"
 enum-iterator = "1.2.0"
 perf-event = "0.4.8"
 serde_json = "1.0.89"
+rayon = "1.6.1"
 
 [lib]
 crate-type = ["staticlib", "lib"]
@@ -43,7 +44,7 @@ debug = true
 incremental = true
 
 [features]
-default = ["head-early-abort-create_false", "inner_basic", "leaf_basic", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false", "dynamic-prefix_false", "basic-use-hint_true", "basic-prefix_true", "basic-heads_true"]
+default = ["head-early-abort-create_false", "inner_basic", "leaf_basic", "hash-leaf-simd_32", "strip-prefix_false", "hash_crc32", "descend-adapt-inner_none", "branch-cache_false", "dynamic-prefix_false", "basic-use-hint_false", "basic-prefix_true", "basic-heads_false"]
 head-early-abort-create_false = []
 inner_basic = []
 leaf_basic = []

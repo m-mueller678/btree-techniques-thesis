@@ -118,22 +118,21 @@ pub fn perf<H: FullKeyHead>() {
 
 fn main() {
     ensure_init();
-    let data = std::env::args().nth(1).unwrap();
-    let data_content = fs::read_to_string(format!("data/{}", data)).unwrap();
-    let mut keys: Vec<&str> = data_content.split('\n').collect();
+    let data = "INT-2E7";
+    let mut keys: Vec<Vec<u8>> = (0..20_000_000u32).map(|x| { x.to_le_bytes().to_vec() }).collect();
     keys.shuffle(&mut thread_rng());
     (1..=15).into_par_iter().for_each(|p| {
         let mut tree = BTree::new();
         let value_len = 1.5f64.powi(p).floor() as usize;
         let value = vec![0u8; value_len];
         for k in &keys {
-            tree.insert(k.as_bytes(), &value);
+            tree.insert(k, &value);
         }
         let stats = btree_to_inner_node_stats(&tree);
         let node_count = total_node_count(&stats);
         for k in &keys {
             // drop is not implemented, remove to avoid memory leaks
-            unsafe { assert!(tree.remove(k.as_bytes())) };
+            unsafe { assert!(tree.remove(k)) };
         }
         println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data,"node_count":node_count,"prefix-truncation":true})).unwrap());
     });

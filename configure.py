@@ -112,6 +112,9 @@ def set_feature(k, v):
     cases.append(copy.deepcopy(features))
 
 
+configure(features);
+exit(0)
+
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
