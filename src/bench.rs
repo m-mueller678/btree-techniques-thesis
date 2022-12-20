@@ -225,11 +225,11 @@ impl Bench {
                 }
                 Op::Range => {
                     #[cfg(debug_assertions)]
-                        let expected: Vec<&Vec<u8>> = self.std_set.range(key.to_owned()..).take(self.range_length).collect();
+                        let expected: Vec<&Vec<u8>> = self.std_set.range(..=key.to_owned()).rev().take(self.range_length).collect();
                     let mut count = 0;
                     self.stats[op as usize].time_fn(||
                         black_box(
-                            self.tree.range_lookup(&key, range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
+                            self.tree.range_lookup_desc(&key, range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
                                 #[cfg(debug_assertions)]{
                                     assert!(expected[count] == &range_lookup_key_out[..key_len])
                                 }

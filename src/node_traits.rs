@@ -50,6 +50,7 @@ pub unsafe trait LeafNode: Node {
     fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]>;
     fn remove(&mut self, key: &[u8]) -> Option<()>;
     unsafe fn range_lookup(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool;
+    unsafe fn range_lookup_desc(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool;
 }
 
 pub trait InnerConversionSource {

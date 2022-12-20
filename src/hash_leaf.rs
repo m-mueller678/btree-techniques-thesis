@@ -680,4 +680,19 @@ unsafe impl LeafNode for HashLeaf {
         }
         true
     }
+
+    unsafe fn range_lookup_desc(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool {
+        self.sort();
+        debug_assert!(!key_out.is_null());
+        key_out.copy_from_nonoverlapping(start.as_ptr(), self.head.prefix_len as usize);
+        let start_index = self.lower_bound(self.truncate(start)).0.min(self.head.count as usize - 1);
+        for s in self.slots()[..=start_index].iter().rev() {
+            let k = s.key(self.as_bytes());
+            key_out.offset(self.head.prefix_len as isize).copy_from_nonoverlapping(k.0.as_ptr(), k.0.len());
+            if !callback((s.key_len + self.head.prefix_len) as usize, s.value(self.as_bytes())) {
+                return false;
+            }
+        }
+        true
+    }
 }
