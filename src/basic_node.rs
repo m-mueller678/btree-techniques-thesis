@@ -9,6 +9,7 @@ use std::mem::{size_of, transmute};
 use std::{mem, ptr};
 use std::cmp::Ordering;
 use std::ops::Range;
+use std::sync::atomic::AtomicUsize;
 use crate::adaptive::{infrequent};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
@@ -189,8 +190,18 @@ impl BasicNode {
                 let (lower, upper) = self.search_hint(head);
                 let search_result = self.slots()[lower..upper].binary_search_by(|s| {
                     let slot_head = s.head;
-                    slot_head
-                        .cmp(&head)
+                    let head_cmp = slot_head
+                        .cmp(&head);
+                    static EQUAL_COUNT: AtomicUsize = AtomicUsize::new(0);
+                    static TOTAL_COUNT: AtomicUsize = AtomicUsize::new(0);
+                    TOTAL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if head_cmp == Ordering::Equal {
+                        EQUAL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    if infrequent(1_000_000) {
+                        eprintln!("equal_rate {}", EQUAL_COUNT.load(std::sync::atomic::Ordering::Relaxed) as f64 / TOTAL_COUNT.load(std::sync::atomic::Ordering::Relaxed) as f64);
+                    }
+                    head_cmp
                         .then_with(|| s.key(self.as_bytes()).0[self.head.dynamic_prefix_len as usize..].cmp(&key.0[self.head.dynamic_prefix_len as usize..]))
                 });
                 (lower, search_result)

@@ -114,6 +114,8 @@ def set_feature(k, v):
 
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
+configure(features);
+exit(0)
 set_feature('basic-use-hint', 'true')
 assert len(cases) == 4
 
