@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/basic_opt.out"
+OUT="$HOME/advanced.out"
 touch $OUT
 
 cd ~/cp-target

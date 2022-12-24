@@ -5,14 +5,14 @@ from datetime import datetime
 from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
-HOST = "cascade-01"
+HOST = "zen4-students"
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    # "inner": ["padded", "basic", "explicit_length", "ascii","art"],
-    "inner": ["basic"],
-    "leaf": ["basic"],
+    "inner": ["basic","padded",  "explicit_length", "ascii","art"],
+    #"inner": ["basic"],
+    "leaf": ["basic","hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
@@ -116,9 +116,18 @@ set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
 cases=[]
-set_feature('basic-use-hint', 'naive')
+set_feature('dynamic-prefix', 'true')
+set_feature("leaf","hash")
+set_feature('dynamic-prefix', 'true')
+set_feature("strip-prefix","true")
+features["strip-prefix"] = "false"
+for inner in ["padded",  "explicit_length", "ascii","art"]:
+    set_feature('inner', inner)
+features["inner"] = "basic"
+for adapt in ["1000", "100", "10"]:
+    set_feature("descend-adapt-inner",adapt)
 
-assert len(cases) == 1
+assert len(cases) == 11
 
 dir = build_all(cases)
 upload(dir)
