@@ -24,7 +24,7 @@ FEATURES = {
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
 
-    "basic-use-hint": ["false", "true"],
+    "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
     "basic-heads": ["false", "true"],
 }
@@ -115,7 +115,10 @@ def set_feature(k, v):
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
-assert len(cases) == 4
+cases=[]
+set_feature('basic-use-hint', 'naive')
+
+assert len(cases) == 1
 
 dir = build_all(cases)
 upload(dir)

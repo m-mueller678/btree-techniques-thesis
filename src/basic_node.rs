@@ -60,7 +60,7 @@ pub struct BasicNodeHead {
     upper_fence: FenceKeySlot,
     prefix_len: u16,
     dynamic_prefix_len: u16,
-    #[cfg(feature = "basic-use-hint_true")]
+    #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]
     hint: [u32; HINT_COUNT],
 }
 
@@ -97,7 +97,7 @@ impl BasicNode {
                 space_used: 0,
                 data_offset: PAGE_SIZE as u16,
                 prefix_len: 0,
-                #[cfg(feature = "basic-use-hint_true")]
+                #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]
                 hint: [0; HINT_COUNT],
                 dynamic_prefix_len: 0,
             },
@@ -217,7 +217,7 @@ impl BasicNode {
 
     /// returns half open range
     fn search_hint(&self, head: u32) -> (usize, usize) {
-        #[cfg(feature = "basic-use-hint_true")]{
+        #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]{
             debug_assert!(self.head.count > 0);
             if self.head.count as usize > HINT_COUNT * 2 {
                 let dist = self.head.count as usize / (HINT_COUNT + 1);
@@ -407,7 +407,7 @@ impl BasicNode {
     }
 
     fn update_hint(&mut self, slot_id: usize) {
-        #[cfg(feature = "basic-use-hint_true")]{
+         #[cfg(feature = "basic-use-hint_true")]{
             let count = self.head.count as usize;
             let dist = count / (HINT_COUNT + 1);
             let begin = if (count > HINT_COUNT * 2 + 1)
@@ -423,10 +423,13 @@ impl BasicNode {
                 debug_assert!(i == 0 || self.head.hint[i - 1] <= self.head.hint[i]);
             }
         }
+        #[cfg(feature = "basic-use-hint_naive")]{
+            return self.make_hint()
+        }
     }
 
     fn make_hint(&mut self) {
-        #[cfg(feature = "basic-use-hint_true")]{
+        #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]{
             let count = self.head.count as usize;
             if count == 0 {
                 return;

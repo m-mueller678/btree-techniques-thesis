@@ -1,5 +1,6 @@
 #!/bin/bash
 
-ssh cascade-01 rm -r cp-target
-rsync -E -e ssh cmake-build-release/btree cascade-01:~/cp-target
-ssh -t cascade-01 NAME="$1" SHUF=1 FILE=data/urls './cp-target'
+ssh cascade-01 rm -r btree
+cargo rustc --bin btree --release -- -C target-cpu=cascadelake
+rsync target/release/btree cascade-01:
+ssh -t cascade-01 OP_COUNT=1e8 INT=2e7 './btree'
