@@ -130,7 +130,7 @@ features["inner"] = "basic"
 for adapt in ["1000", "100", "10"]:
     set_feature("descend-adapt-inner",adapt)
 
-assert len(cases) == 13
+assert len(cases) == 12
 dir = build_all(cases)
 upload(dir)
 print_uploaded()
