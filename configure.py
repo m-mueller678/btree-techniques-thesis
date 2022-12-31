@@ -24,6 +24,7 @@ FEATURES = {
     "descend-adapt-inner": ["none", "1000", "100", "10"],
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
+    "hash-variant": ["head", "alloc"],
 
     "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
@@ -113,14 +114,17 @@ def set_feature(k, v):
     cases.append(copy.deepcopy(features))
 
 
+configure(default_features())
+exit(0)
+
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
-cases=[]
+cases = []
 set_feature('basic-use-hint', 'true')
 set_feature('dynamic-prefix', 'true')
 features['dynamic-prefix'] = "false"
-set_feature("leaf","hash")
-set_feature("strip-prefix","true")
+set_feature("leaf", "hash")
+set_feature("strip-prefix", "true")
 features["strip-prefix"] = "false"
 set_feature("branch-cache",'true')
 features["branch-cache"] = "false"

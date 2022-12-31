@@ -20,6 +20,10 @@ pub mod b_tree;
 pub mod basic_node;
 pub mod btree_node;
 mod find_separator;
+#[cfg(feature = "hash-variant_head")]
+pub mod hash_leaf;
+#[cfg(feature = "hash-variant_alloc")]
+#[path = "alloc_hash.rs"]
 pub mod hash_leaf;
 pub mod head_node;
 pub mod node_traits;
