@@ -638,17 +638,21 @@ unsafe impl LeafNode for HashLeaf {
 
         let index = self.find_index(self.truncate(key))?;
         let new_count = self.head.count as usize - 1;
-        let last = new_count;
         let slot = self.slots()[index];
         self.head.space_used -= slot.key_len + slot.val_len;
-        if index < last {
-            let slots = self.slots_mut();
-            slots[index] = slots[last];
-            let hashes = self.hashes_mut();
-            hashes[index] = hashes[last];
+        let mut swap_remove_slot = index;
+        let sorted_count = self.head.sorted_count as usize;
+        if swap_remove_slot < sorted_count {
+            self.slots_mut()[swap_remove_slot..sorted_count].copy_within(1.., 0);
+            self.hashes_mut()[swap_remove_slot..sorted_count].copy_within(1.., 0);
+            swap_remove_slot = sorted_count - 1;
+            self.head.sorted_count -= 1;
         }
-        if self.head.sorted_count > index as u16 {
-            self.head.sorted_count = index as u16;
+        {
+            let slots = self.slots_mut();
+            slots[swap_remove_slot] = slots[new_count];
+            let hashes = self.hashes_mut();
+            hashes[swap_remove_slot] = hashes[new_count];
         }
         assert!(SLOTS_FIRST);
         let old_layout = Self::layout(new_count + 1);
