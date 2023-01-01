@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/advanced.out"
+OUT="$HOME/hashes.out"
 touch $OUT
 
 cd ~/cp-target
