@@ -138,9 +138,12 @@ impl HashLeaf {
             Ok(())
         } else {
             // shrink hash area
-            let target_hash_capacity = Self::hash_capacity(self.head.count as usize) as u16;
-            self.head.space_used -= self.head.hash_area.len - target_hash_capacity;
-            self.head.hash_area.len = target_hash_capacity;
+            // keep one extra slot, as it might be needed for insert
+            let target_hash_capacity = Self::hash_capacity(self.head.count as usize + 1) as u16;
+            if target_hash_capacity < self.head.hash_area.len {
+                self.head.space_used -= self.head.hash_area.len - target_hash_capacity;
+                self.head.hash_area.len = target_hash_capacity;
+            }
 
             if space <= self.free_space_after_compaction() {
                 self.compactify();
