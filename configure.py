@@ -24,6 +24,7 @@ FEATURES = {
     "descend-adapt-inner": ["none", "1000", "100", "10"],
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
+    "hash-variant": ["head", "alloc"],
 
     "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
@@ -120,8 +121,7 @@ set_feature('basic-use-hint', 'true')
 # set_feature('dynamic-prefix', 'true')
 # features['dynamic-prefix'] = "false"
 set_feature("leaf", "hash")
-
-# set_feature("strip-prefix","true")
+# set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
 # set_feature("branch-cache",'true')
 # features["branch-cache"] = "false"

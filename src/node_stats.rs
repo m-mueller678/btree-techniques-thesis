@@ -14,8 +14,8 @@ fn total_node_count(stats: &[InnerNodeData]) -> usize {
     let max_depth = stats.iter().map(|n| n.depth).max().unwrap();
     let leaf_count: usize = stats.iter().filter(|n| n.depth == max_depth).map(|n| n.keys.len() + 1).sum();
     let lc2 = stats.iter().map(|n| n.keys.len() + 1).sum::<usize>() + 1;
-    dbg!(leaf_count+stats.len(),lc2);
-    lc2
+    assert_eq!(leaf_count + stats.len(), lc2);
+    lc2 + stats.len()
 }
 
 pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<InnerNodeData> {

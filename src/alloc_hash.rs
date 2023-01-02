@@ -1,11 +1,13 @@
 use crate::find_separator::find_separator;
-use crate::node_traits::{FenceData, FenceRef, InnerNode, LeafNode, Node};
-use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
-use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
+use crate::util::{common_prefix_len, MergeFences, partial_restore, short_slice, SplitFences};
+use crate::{BTreeNode, PrefixTruncatedKey, PAGE_SIZE, FatTruncatedKey};
+use rustc_hash::FxHasher;
+use std::hash::Hasher;
 use std::io::Write;
-use std::mem::{align_of, ManuallyDrop, MaybeUninit, size_of, transmute};
-use std::simd::SimdPartialEq;
+use std::mem::{size_of, transmute, ManuallyDrop, align_of};
+use std::simd::{Simd, SimdPartialEq};
 use crate::btree_node::{AdaptionState, BTreeNodeHead};
+use crate::node_traits::{FenceData, FenceRef, InnerNode, LeafNode, Node};
 use crate::vtables::BTreeNodeTag;
 
 #[derive(Clone, Copy)]
@@ -42,6 +44,7 @@ struct HashLeafHead {
     space_used: u16,
     data_offset: u16,
     prefix_len: u16,
+    hash_area: FenceKeySlot,
 }
 
 #[derive(Clone)]
@@ -54,44 +57,24 @@ pub struct HashLeaf {
 
 struct LayoutInfo {
     slots_start: usize,
-    hash_start: usize,
     data_start: usize,
 }
 
-const SLOTS_FIRST: bool = true;
 const USE_SIMD: bool = true;
-
-#[cfg(feature = "hash-leaf-simd_32")]
-const SIMD_WIDTH: usize = 32;
-#[cfg(feature = "hash-leaf-simd_64")]
 const SIMD_WIDTH: usize = 64;
-
-const SIMD_ALIGN: usize = 64;
+const SIMD_ALIGN: usize = align_of::<Simd<u8, SIMD_WIDTH>>();
 
 impl HashLeaf {
-    pub fn space_needed(&self, key_length: usize, payload_length: usize) -> usize {
-        assert!(SLOTS_FIRST);
-        let head_growth = if USE_SIMD {
-            SIMD_ALIGN.max(size_of::<HashSlot>()) + 1
-        } else {
-            size_of::<HashSlot>() + 1
-        };
-        key_length - self.head.prefix_len as usize + payload_length + head_growth
+    pub fn space_needed_new_slot(&self, key_length: usize, payload_length: usize) -> usize {
+        let hash_space = if self.head.count == self.head.hash_area.len { Self::hash_capacity(self.head.count as usize + 1) } else { 0 };
+        key_length - self.head.prefix_len as usize + payload_length + hash_space + size_of::<HashSlot>()
     }
 
     fn layout(count: usize) -> LayoutInfo {
-        debug_assert!(SLOTS_FIRST);
         let slots_start = size_of::<HashLeafHead>();
-        let hash_start = slots_start + size_of::<HashSlot>() * count;
-        let hash_start = if USE_SIMD {
-            hash_start.next_multiple_of(SIMD_ALIGN)
-        } else {
-            hash_start
-        };
-        let data_start = hash_start + count;
+        let data_start = slots_start + size_of::<HashSlot>() * count;
         LayoutInfo {
             slots_start,
-            hash_start,
             data_start,
         }
     }
@@ -139,45 +122,55 @@ impl HashLeaf {
     }
 
     pub fn hashes(&self) -> &[u8] {
-        let count = self.head.count as usize;
-        &self.as_bytes()[Self::layout(count).hash_start..][..count]
+        &self.as_bytes()[self.head.hash_area.offset as usize..][..self.head.count as usize]
     }
 
     pub fn hashes_mut(&mut self) -> &mut [u8] {
+        let offset = self.head.hash_area.offset;
+        let count = self.head.count;
         unsafe {
-            let count = self.head.count as usize;
-            &mut self.as_bytes_mut()[Self::layout(count).hash_start..][..count]
+            &mut self.as_bytes_mut()[offset as usize..][..count as usize]
         }
     }
 
     pub fn request_space(&mut self, space: usize) -> Result<(), ()> {
         if space <= self.free_space() {
             Ok(())
-        } else if space <= self.free_space_after_compaction() {
-            self.compactify();
-            Ok(())
         } else {
-            Err(())
+            // shrink hash area
+            // keep one extra slot, as it might be needed for insert
+            let target_hash_capacity = Self::hash_capacity(self.head.count as usize + 1) as u16;
+            if target_hash_capacity < self.head.hash_area.len {
+                self.head.space_used -= self.head.hash_area.len - target_hash_capacity;
+                self.head.hash_area.len = target_hash_capacity;
+            }
+
+            if space <= self.free_space_after_compaction() {
+                self.compactify();
+                Ok(())
+            } else {
+                Err(())
+            }
         }
     }
 
     fn compactify(&mut self) {
-        // do not validate here, called from insert_truncated with some invariants validated
         //eprintln!("{:?} compactify",self as *const Self);
         let mut buffer = [0u8; PAGE_SIZE];
         let fences_len = self.head.lower_fence.len as usize + self.head.upper_fence.len as usize;
         let new_data_offset = PAGE_SIZE - self.head.space_used as usize;
         let new_data_range = new_data_offset..PAGE_SIZE - fences_len;
         let mut write = &mut buffer[new_data_range.clone()];
+        {
+            let new_offset = (PAGE_SIZE - fences_len - write.len()) as u16;
+            write.write_all(short_slice(self.as_bytes(), self.head.hash_area.offset, self.head.hash_area.len)).unwrap();
+            self.head.hash_area.offset = new_offset;
+        }
         for i in 0..self.head.count as usize {
             let new_offset = (PAGE_SIZE - fences_len - write.len()) as u16;
             debug_assert!(new_offset >= new_data_offset as u16);
-            write
-                .write_all(self.slots()[i].key(self.as_bytes()).0)
-                .unwrap();
-            write
-                .write_all(self.slots()[i].value(self.as_bytes()))
-                .unwrap();
+            write.write_all(self.slots()[i].key(self.as_bytes()).0).unwrap();
+            write.write_all(self.slots()[i].value(self.as_bytes())).unwrap();
             self.slots_mut()[i].offset = new_offset;
         }
         debug_assert!(write.is_empty());
@@ -209,6 +202,7 @@ impl HashLeaf {
         crc32fast::hash(key.0) as u8
     }
 
+
     fn store_key_value(
         &mut self,
         slot_id: usize,
@@ -235,9 +229,7 @@ impl HashLeaf {
             self.request_space(key.0.len() + payload.len())?;
             found
         } else {
-            self.request_space(
-                self.space_needed(key.0.len() + self.head.prefix_len as usize, payload.len()),
-            )?;
+            self.request_space(self.space_needed_new_slot(key.0.len() + self.head.prefix_len as usize, payload.len()))?;
             self.increase_size(1);
             self.head.count as usize - 1
         };
@@ -247,18 +239,33 @@ impl HashLeaf {
         Ok(())
     }
 
+    fn hash_capacity(size: usize) -> usize {
+        size.next_power_of_two()
+    }
+
     fn increase_size(&mut self, delta: usize) {
-        assert!(SLOTS_FIRST);
         let count = self.head.count as usize;
-        let old_layout = Self::layout(count as usize);
-        let new_layout = Self::layout(count + delta);
-        unsafe {
-            self.as_bytes_mut().copy_within(
-                old_layout.hash_start..old_layout.hash_start + count,
-                new_layout.hash_start,
-            );
+        let old_hash_capacity = self.head.hash_area.len as usize;
+        let new_size = self.head.count as usize + delta;
+        if new_size > old_hash_capacity {
+            let new_capacity = Self::hash_capacity(new_size);
+            let old_hash_start = self.head.hash_area.offset as usize;
+            let new_hash_start = self.head.data_offset as usize - new_capacity;
+            self.head.data_offset = new_hash_start as u16;
+            self.head.space_used += (new_capacity - old_hash_capacity) as u16;
+            self.assert_no_collide();
+            let old_count = self.head.count as usize;
+            debug_assert!(old_hash_start > new_hash_start);
+            unsafe {
+                let (low, high) = self.as_bytes_mut().split_at_mut(old_hash_start);
+                low[new_hash_start..][..count].copy_from_slice(&high[..old_count]);
+            }
+            self.head.hash_area = FenceKeySlot {
+                offset: new_hash_start as u16,
+                len: new_capacity as u16,
+            };
         }
-        self.head.count += delta as u16;
+        self.head.count = new_size as u16;
     }
 
     fn write_data(&mut self, d: &[u8]) -> u16 {
@@ -344,6 +351,10 @@ impl HashLeaf {
                 space_used: 0,
                 data_offset: PAGE_SIZE as u16,
                 prefix_len: 0,
+                hash_area: FenceKeySlot {
+                    offset: PAGE_SIZE as u16,
+                    len: 0,
+                },
             },
             data: [0u8; PAGE_SIZE - size_of::<HashLeafHead>()],
         }
@@ -353,10 +364,7 @@ impl HashLeaf {
         let needle_hash = Self::compute_hash(key);
         //eprintln!("find {:?} -> {}",key,needle_hash);
         if USE_SIMD {
-            debug_assert_eq!(
-                self.find_simd(key, needle_hash),
-                self.find_no_simd(key, needle_hash)
-            );
+            debug_assert_eq!(self.find_simd(key, needle_hash), self.find_no_simd(key, needle_hash));
             self.find_simd(key, needle_hash)
         } else {
             self.find_no_simd(key, needle_hash)
@@ -377,31 +385,29 @@ impl HashLeaf {
             use std::simd::ToBitMask;
             type SimdDtype = std::simd::Simd<u8, SIMD_WIDTH>;
             let count = self.head.count as usize;
-            let mut hash_ptr = (self as *const Self as *const u8)
-                .offset(Self::layout(count).hash_start as isize)
-                as *const SimdDtype;
+            let hash_offset_mod = self.head.hash_area.offset as usize % SIMD_ALIGN;
+            let hash_offset_floor = self.head.hash_area.offset as usize - hash_offset_mod;
+            let mut hash_ptr = (self as *const Self as *const u8).offset(hash_offset_floor as isize) as *const SimdDtype;
             let needle = SimdDtype::splat(needle_hash);
             debug_assert!(hash_ptr.is_aligned());
-            let mut shift = 0;
-            while shift < count {
-                let candidates = *(hash_ptr);
-                let mut matches = candidates.simd_eq(needle).to_bitmask();
-                loop {
-                    let trailing_zeros = matches.trailing_zeros();
-                    if trailing_zeros == SIMD_WIDTH as u32 {
-                        shift = shift - shift % SIMD_WIDTH + SIMD_WIDTH;
-                        hash_ptr = hash_ptr.offset(1);
-                        break;
-                    } else {
-                        shift += trailing_zeros as usize;
-                        matches >>= trailing_zeros;
-                        matches = matches & !1;
-                        if shift >= count {
-                            return None;
-                        }
-                        if self.slots()[shift].key(self.as_bytes()) == key {
-                            return Some(shift);
-                        }
+            let mut shift = hash_offset_mod;
+            let mut matches = (*hash_ptr).simd_eq(needle).to_bitmask() >> shift;
+            let shift_limit = shift + count;
+            while shift < shift_limit {
+                let trailing_zeros = matches.trailing_zeros();
+                if trailing_zeros == SIMD_WIDTH as u32 {
+                    shift = shift - shift % SIMD_WIDTH + SIMD_WIDTH;
+                    hash_ptr = hash_ptr.offset(1);
+                    matches = (*hash_ptr).simd_eq(needle).to_bitmask();
+                } else {
+                    shift += trailing_zeros as usize;
+                    matches >>= trailing_zeros;
+                    matches = matches & !1;
+                    if shift >= shift_limit {
+                        return None;
+                    }
+                    if self.slots()[shift - hash_offset_mod].key(self.as_bytes()) == key {
+                        return Some(shift - hash_offset_mod);
                     }
                 }
             }
@@ -413,7 +419,7 @@ impl HashLeaf {
         const VALIDATE_HASH_QUALITY: bool = false;
         if cfg!(debug_assertions) && VALIDATE_HASH_QUALITY {
             let mut counts = [0; 256];
-            let average = self.head.count as f32 / 256.0;
+            let average = (self.head.count as f32 / 256.0);
             let mut acc = 0.0;
             for h in self.hashes() {
                 counts[*h as usize] += 1;
@@ -435,6 +441,7 @@ impl HashLeaf {
             self.head.space_used as usize,
             self.head.lower_fence.len as usize
                 + self.head.upper_fence.len as usize
+                + self.head.hash_area.len as usize
                 + self
                 .slots()
                 .iter()
@@ -445,27 +452,18 @@ impl HashLeaf {
         debug_assert!(self.slots()[..self.head.sorted_count as usize].is_sorted_by_key(|s| s.key(self.as_bytes())));
     }
 
-    pub fn try_merge_right(
-        &self,
-        right: &mut Self,
-        separator: FatTruncatedKey,
-    ) -> Result<(), ()> {
+    pub fn try_merge_right(&self, right: &mut Self, separator: FatTruncatedKey) -> Result<(), ()> {
         //eprintln!("### {:?} merge right {:?}",self as *const Self,right as *const Self);
         // self.print();
         // right.print();
         //TODO optimize
-        // if prefix length does not change, hashes can be copied
         let mut tmp = Self::new();
         tmp.set_fences(MergeFences::new(self.fences(), separator, right.fences()).fences());
         let left = self.slots().iter().map(|s| (s, &*self));
         let right_iter = right.slots().iter().map(|s| (s, &*right));
         for (s, this) in left.chain(right_iter) {
-            let segments = &[
-                &separator.remainder[..this.head.prefix_len as usize - separator.prefix_len],
-                s.key(this.as_bytes()).0,
-            ];
-            let reconstructed =
-                partial_restore(separator.prefix_len, segments, tmp.head.prefix_len as usize);
+            let segments = &[&separator.remainder[..this.head.prefix_len as usize - separator.prefix_len], s.key(this.as_bytes()).0];
+            let reconstructed = partial_restore(separator.prefix_len, segments, tmp.head.prefix_len as usize);
             tmp.insert_truncated(PrefixTruncatedKey(&reconstructed), s.value(this.as_bytes()))?;
         }
         tmp.head.sorted_count = self.head.sorted_count;
@@ -481,6 +479,7 @@ impl HashLeaf {
     }
 
     fn sort(&mut self) {
+        use std::mem::MaybeUninit;
         let unsorted_count = (self.head.count - self.head.sorted_count) as usize;
         if unsorted_count == 0 {
             return;
@@ -581,13 +580,11 @@ unsafe impl Node for HashLeaf {
         node_right.validate();
         // node_left.print();
         // node_right.print();
-        debug_assert_eq!(
-            self.head.count,
-            node_left.head.count + node_right.head.count
-        );
+        debug_assert_eq!(self.head.count, node_left.head.count + node_right.head.count);
         *self = node_right;
         Ok(())
     }
+
 
     fn is_underfull(&self) -> bool {
         self.free_space_after_compaction() >= PAGE_SIZE * 3 / 4
@@ -596,12 +593,7 @@ unsafe impl Node for HashLeaf {
     fn print(&self) {
         eprintln!("HashLeaf {:?}: {:?}", self as *const Self, self.fences());
         for (i, s) in self.slots().iter().enumerate() {
-            eprintln!(
-                "{:?}|{:3?}|{:3?}",
-                i,
-                self.hashes()[i],
-                s.key(self.as_bytes())
-            );
+            eprintln!("{:?}|{:3?}|{:3?}", i, self.hashes()[i], s.key(self.as_bytes()));
         }
     }
 
@@ -621,16 +613,18 @@ unsafe impl LeafNode for HashLeaf {
         let key = self.truncate(key);
         self.insert_truncated(key, payload)
     }
+
+
     fn lookup(&mut self, key: &[u8]) -> Option<&mut [u8]> {
         self.validate();
-        self.find_index(self.truncate(key))
-            .map(|i| {
-                let slot = self.slots()[i];
-                unsafe {
-                    &mut self.as_bytes_mut()[(slot.offset + slot.key_len) as usize..][..slot.val_len as usize]
-                }
-            })
+        self.find_index(self.truncate(key)).map(|i| {
+            let slot = self.slots()[i];
+            unsafe {
+                &mut self.as_bytes_mut()[(slot.offset + slot.key_len) as usize..][..slot.val_len as usize]
+            }
+        })
     }
+
 
     fn remove(&mut self, key: &[u8]) -> Option<()> {
         //eprintln!("### {:?} remove {:?}",self as *const Self,key);
@@ -638,6 +632,7 @@ unsafe impl LeafNode for HashLeaf {
 
         let index = self.find_index(self.truncate(key))?;
         let new_count = self.head.count as usize - 1;
+        let last = new_count;
         let slot = self.slots()[index];
         self.head.space_used -= slot.key_len + slot.val_len;
         let mut swap_remove_slot = index;
@@ -654,21 +649,12 @@ unsafe impl LeafNode for HashLeaf {
             let hashes = self.hashes_mut();
             hashes[swap_remove_slot] = hashes[new_count];
         }
-        assert!(SLOTS_FIRST);
-        let old_layout = Self::layout(new_count + 1);
-        let new_layout = Self::layout(new_count);
-        unsafe {
-            self.as_bytes_mut().copy_within(
-                old_layout.hash_start..old_layout.hash_start + new_count,
-                new_layout.hash_start,
-            );
-        }
-        debug_assert_eq!(old_layout.slots_start, new_layout.slots_start);
         self.head.count -= 1;
         self.validate();
         // self.print();
         Some(())
     }
+
 
     unsafe fn range_lookup(&mut self, start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) -> bool {
         self.sort();
