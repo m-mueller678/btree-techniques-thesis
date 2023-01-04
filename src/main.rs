@@ -118,8 +118,24 @@ pub fn perf<H: FullKeyHead>() {
 
 fn main() {
     ensure_init();
-    let data = "INT-2E7";
-    let mut keys: Vec<Vec<u8>> = (0..20_000_000u32).map(|x| { x.to_le_bytes().to_vec() }).collect();
+
+    let mut data: Option<(Vec<Vec<u8>>, String)> = None;
+    if let Ok(var) = std::env::var("INT") {
+        assert!(data.is_none());
+        let count = var.parse::<f64>().unwrap();
+        assert!(count >= 0.0);
+        assert!(count < u32::MAX as f64);
+        assert!(count.fract() == 0.0);
+        let count: u32 = count as u32;
+        data = Some(((0..count).map(|x| { x.to_le_bytes().to_vec() }).collect(), format!("INT-{}", count)));
+    }
+    if let Ok(var) = std::env::var("FILE") {
+        assert!(data.is_none());
+        let file = std::io::BufReader::new(std::fs::File::open(&var).unwrap());
+        data = Some((file.lines().map(|l| { l.unwrap().into_bytes() }).collect(), format!("FILE-{}", var)));
+    }
+    let (mut keys, data_name) = data.expect("no bench");
+
     keys.shuffle(&mut thread_rng());
     (1..=15).into_par_iter().for_each(|p| {
         let mut tree = BTree::new();
@@ -134,6 +150,9 @@ fn main() {
             // drop is not implemented, remove to avoid memory leaks
             unsafe { assert!(tree.remove(k)) };
         }
-        println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data,"node_count":node_count,"prefix-truncation":true})).unwrap());
+        #[cfg(feature = "leaf_basic")] let variant = "basic";
+        #[cfg(all(feature = "leaf_hash", feature = "hash-variant_head"))] let variant = "head-shifting";
+        #[cfg(all(feature = "leaf_hash", feature = "hash-variant_alloc"))] let variant = "alloc";
+        println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data_name,"node_count":node_count,"variant":variant})).unwrap());
     });
 }
