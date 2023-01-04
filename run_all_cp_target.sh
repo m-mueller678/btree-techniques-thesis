@@ -1,14 +1,14 @@
 set -e
 
-OUT="$HOME/basic_opt.out"
+OUT="$HOME/hashes.out"
 touch $OUT
 
 cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {1..20}
+for i in {1..10}
 do
 OP_COUNT=1e8 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;
-#OP_COUNT=1e8 INT=2e7 find . -name 'btree-*' -exec {} >> $OUT \;
+OP_COUNT=1e8 INT=2e7 find . -name 'btree-*' -exec {} >> $OUT \;
 done

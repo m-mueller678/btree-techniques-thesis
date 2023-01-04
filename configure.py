@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import copy
 import shutil
 import subprocess
@@ -10,9 +11,9 @@ HOST = "cascade-01"
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    # "inner": ["padded", "basic", "explicit_length", "ascii","art"],
-    "inner": ["basic"],
-    "leaf": ["basic"],
+    "inner": ["basic","padded",  "explicit_length", "ascii","art"],
+    #"inner": ["basic"],
+    "leaf": ["basic","hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
@@ -23,8 +24,9 @@ FEATURES = {
     "descend-adapt-inner": ["none", "1000", "100", "10"],
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
+    "hash-variant": ["head", "alloc"],
 
-    "basic-use-hint": ["false", "true"],
+    "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
     "basic-heads": ["false", "true"],
 }
@@ -111,15 +113,26 @@ def set_feature(k, v):
     features[k] = v
     cases.append(copy.deepcopy(features))
 
-
-configure(features);
-exit(0)
-
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
+cases = []
 set_feature('basic-use-hint', 'true')
-assert len(cases) == 4
+# set_feature('dynamic-prefix', 'true')
+# features['dynamic-prefix'] = "false"
+set_feature("leaf", "hash")
+set_feature("hash-variant", "alloc")
+#
+# set_feature("strip-prefix", "true")
+# features["strip-prefix"] = "false"
+# set_feature("branch-cache",'true')
+# features["branch-cache"] = "false"
+# for inner in ["padded",  "explicit_length", "ascii","art"]:
+#     set_feature('inner', inner)
+# features["inner"] = "basic"
+# for adapt in ["1000", "100", "10"]:
+#     set_feature("descend-adapt-inner",adapt)
 
+assert len(cases) == 3
 dir = build_all(cases)
 upload(dir)
 print_uploaded()

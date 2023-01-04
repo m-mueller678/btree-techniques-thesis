@@ -176,4 +176,52 @@ impl BTree {
             }
         }
     }
+
+    pub fn range_lookup_desc(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        count_op();
+        let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
+        let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
+        start_key_buffer[..initial_start.len()].copy_from_slice(initial_start);
+        let mut start_key_len = initial_start.len();
+
+        loop {
+            self.branch_cache.reset();
+            let mut parent = None;
+            let mut node = unsafe { &mut *self.root };
+            let mut index = 0;
+            loop {
+                if node.tag().is_inner() {
+                    let node_inner = node.to_inner_mut();
+                    index = node_inner.find_child_index(&start_key_buffer[..start_key_len], &mut self.branch_cache);
+                    let child = unsafe { &mut *node_inner.get_child(index) };
+                    parent = Some(node_inner);
+                    node = child;
+                } else {
+                    unsafe {
+                        if !node.to_leaf_mut().range_lookup_desc(&start_key_buffer[..start_key_len], key_out, callback) {
+                            return;
+                        }
+                        if let Some(p) = parent {
+                            let fence_data = p.fences();
+                            let count = p.key_count();
+                            let lower = if index > 0 {
+                                let upper_len = p.get_key(index - 1, &mut get_key_buffer, 0).unwrap();
+                                trailing_bytes(&get_key_buffer, upper_len)
+                            } else {
+                                fence_data.lower_fence.to_stripped(fence_data.prefix_len).0
+                            };
+                            if lower.is_empty() {
+                                return;
+                            }
+                            start_key_buffer[fence_data.prefix_len..][..lower.len()].copy_from_slice(lower);
+                            start_key_len = fence_data.prefix_len + lower.len();
+                        } else {
+                            return;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
 }
