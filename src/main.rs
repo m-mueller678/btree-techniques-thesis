@@ -8,6 +8,7 @@ use std::hint::black_box;
 use std::{fs, ptr};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::io::BufRead;
 
 use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng, thread_rng};

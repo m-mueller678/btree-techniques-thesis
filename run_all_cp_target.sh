@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/hashes.out"
+OUT="$HOME/hashes-size.out"
 touch $OUT
 
 cd ~/cp-target
