@@ -138,7 +138,7 @@ fn main() {
     let (mut keys, data_name) = data.expect("no bench");
 
     keys.shuffle(&mut Xoshiro128PlusPlus::seed_from_u64(123));
-    (1..=7).into_par_iter().for_each(|p| {
+    (1..=15).into_par_iter().for_each(|p| {
         let mut tree = BTree::new();
         let value_len = 1.5f64.powi(p).floor() as usize;
         let value = vec![0u8; value_len];
