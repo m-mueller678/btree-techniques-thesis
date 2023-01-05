@@ -138,7 +138,7 @@ fn main() {
     let (mut keys, data_name) = data.expect("no bench");
 
     keys.shuffle(&mut thread_rng());
-    (1..=15).into_par_iter().for_each(|p| {
+    (1..=7).into_par_iter().for_each(|p| {
         let mut tree = BTree::new();
         let value_len = 1.5f64.powi(p).floor() as usize;
         let value = vec![0u8; value_len];
@@ -151,9 +151,8 @@ fn main() {
             // drop is not implemented, remove to avoid memory leaks
             unsafe { assert!(tree.remove(k)) };
         }
-        #[cfg(feature = "leaf_basic")] let variant = "basic";
-        #[cfg(all(feature = "leaf_hash", feature = "hash-variant_head"))] let variant = "head-shifting";
-        #[cfg(all(feature = "leaf_hash", feature = "hash-variant_alloc"))] let variant = "alloc";
+        #[cfg(feature = "strip-prefix_true")] let variant = "true";
+        #[cfg(feature = "strip-prefix_false")] let variant = "false";
         println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data_name,"node_count":node_count,"variant":variant})).unwrap());
     });
 }
