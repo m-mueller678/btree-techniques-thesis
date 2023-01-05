@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::BufRead;
 
 use std::time::{Duration, Instant};
-use rand::{Rng, RngCore, SeedableRng, thread_rng};
+use rand::{Rng, RngCore, SeedableRng};
 use rand::prelude::SliceRandom;
 use rand_xoshiro::Xoshiro128PlusPlus;
 use serde_json::json;
@@ -137,7 +137,7 @@ fn main() {
     }
     let (mut keys, data_name) = data.expect("no bench");
 
-    keys.shuffle(&mut thread_rng());
+    keys.shuffle(&mut Xoshiro128PlusPlus::seed_from_u64(123));
     (1..=7).into_par_iter().for_each(|p| {
         let mut tree = BTree::new();
         let value_len = 1.5f64.powi(p).floor() as usize;
