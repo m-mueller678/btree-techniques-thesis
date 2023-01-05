@@ -138,9 +138,10 @@ fn main() {
     let (mut keys, data_name) = data.expect("no bench");
 
     keys.shuffle(&mut Xoshiro128PlusPlus::seed_from_u64(123));
-    (1..=15).into_par_iter().for_each(|p| {
+    let chunk: usize = std::env::var("CHUNK").unwrap().parse().unwrap();
+    let sizes: Vec<usize> = (chunk * 50..).step_by(10).skip(1).take(5).collect();
+    sizes.into_par_iter().for_each(|value_len| {
         let mut tree = BTree::new();
-        let value_len = 1.5f64.powi(p).floor() as usize;
         let value = vec![0u8; value_len];
         for k in &keys {
             tree.insert(k, &value);
