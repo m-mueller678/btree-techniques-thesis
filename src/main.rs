@@ -141,21 +141,20 @@ fn main() {
     keys.shuffle(&mut rng);
     let chunk: usize = std::env::var("CHUNK").unwrap().parse().unwrap();
     let sizes: Vec<usize> = (chunk * 100..).step_by(20).skip(1).take(5).collect();
-    sizes.into_par_iter().for_each(|value_len| {
-        static ZEROS: &[u8] = &[0; 1024];
-        let mut tree = BTree::new();
-        for k in &keys {
-            let val_len = thread_rng().gen_range(0..=value_len * 2);
-            tree.insert(k, &ZEROS[..val_len]);
-        }
-        let stats = btree_to_inner_node_stats(&tree);
-        let node_count = total_node_count(&stats);
-        for k in &keys {
-            // drop is not implemented, remove to avoid memory leaks
-            unsafe { assert!(tree.remove(k)) };
-        }
-        #[cfg(feature = "strip-prefix_true")] let variant = "true";
-        #[cfg(feature = "strip-prefix_false")] let variant = "false";
-        println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data_name,"node_count":node_count,"variant":variant})).unwrap());
-    });
+    let value_len = 400 + chunk * 20;
+    static ZEROS: &[u8] = &[0; 1024];
+    let mut tree = BTree::new();
+    for k in &keys {
+        let val_len = thread_rng().gen_range(0..=value_len * 2);
+        tree.insert(k, &ZEROS[..val_len]);
+    }
+    let stats = btree_to_inner_node_stats(&tree);
+    let node_count = total_node_count(&stats);
+    for k in &keys {
+        // drop is not implemented, remove to avoid memory leaks
+        unsafe { assert!(tree.remove(k)) };
+    }
+    #[cfg(feature = "strip-prefix_true")] let variant = "true";
+    #[cfg(feature = "strip-prefix_false")] let variant = "false";
+    println!("{}", serde_json::to_string(&json!({"value_len":value_len,"data":data_name,"node_count":node_count,"variant":variant})).unwrap());
 }
