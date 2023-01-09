@@ -7,7 +7,7 @@ cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {0..5}
+for i in {0..10}
 do
 CHUNK=$i FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;
 CHUNK=$i FILE="$HOME/data/genome" find . -name 'btree-*' -exec {} >> $OUT \;

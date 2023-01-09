@@ -22,7 +22,7 @@ impl BTree {
     #[tracing::instrument(skip(self))]
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) {
         count_op();
-        assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
+        assert!((key.len() + payload.len()) as usize <= PAGE_SIZE * 3 / 4);
         unsafe {
             let (node, parent, pos) = (&mut *self.root).descend(key, |_| false, &mut self.branch_cache);
             let node = &mut *node;
