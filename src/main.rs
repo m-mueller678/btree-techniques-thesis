@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::io::BufRead;
 
 use std::time::{Duration, Instant};
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand::prelude::SliceRandom;
 use rand_xoshiro::Xoshiro128PlusPlus;
 use serde_json::json;
@@ -137,14 +137,16 @@ fn main() {
     }
     let (mut keys, data_name) = data.expect("no bench");
 
-    keys.shuffle(&mut Xoshiro128PlusPlus::seed_from_u64(123));
+    let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
+    keys.shuffle(&mut rng);
     let chunk: usize = std::env::var("CHUNK").unwrap().parse().unwrap();
-    let sizes: Vec<usize> = (chunk * 50..).step_by(10).skip(1).take(5).collect();
+    let sizes: Vec<usize> = (chunk * 100..).step_by(20).skip(1).take(5).collect();
     sizes.into_par_iter().for_each(|value_len| {
+        static ZEROS: &[u8] = &[0; 1024];
         let mut tree = BTree::new();
-        let value = vec![0u8; value_len];
         for k in &keys {
-            tree.insert(k, &value);
+            let val_len = thread_rng().gen_range(0..=value_len * 2);
+            tree.insert(k, &ZEROS[..val_len]);
         }
         let stats = btree_to_inner_node_stats(&tree);
         let node_count = total_node_count(&stats);
