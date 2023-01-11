@@ -9,6 +9,7 @@ use std::mem::{size_of, transmute};
 use std::{mem, ptr};
 use std::cmp::Ordering;
 use std::ops::Range;
+use tracing_subscriber::filter::combinator::Or;
 use crate::adaptive::{infrequent};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
@@ -60,7 +61,7 @@ pub struct BasicNodeHead {
     upper_fence: FenceKeySlot,
     prefix_len: u16,
     dynamic_prefix_len: u16,
-    #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]
+    #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]
     hint: [u32; HINT_COUNT],
 }
 
@@ -97,7 +98,7 @@ impl BasicNode {
                 space_used: 0,
                 data_offset: PAGE_SIZE as u16,
                 prefix_len: 0,
-                #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]
+                #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]
                 hint: [0; HINT_COUNT],
                 dynamic_prefix_len: 0,
             },
@@ -217,7 +218,7 @@ impl BasicNode {
 
     /// returns half open range
     fn search_hint(&self, head: u32) -> (usize, usize) {
-        #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]{
+        #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]{
             debug_assert!(self.head.count > 0);
             if self.head.count as usize > HINT_COUNT * 2 {
                 let dist = self.head.count as usize / (HINT_COUNT + 1);
@@ -407,7 +408,7 @@ impl BasicNode {
     }
 
     fn update_hint(&mut self, slot_id: usize) {
-         #[cfg(feature = "basic-use-hint_true")]{
+        #[cfg(feature = "basic-use-hint_true")]{
             let count = self.head.count as usize;
             let dist = count / (HINT_COUNT + 1);
             let begin = if (count > HINT_COUNT * 2 + 1)
@@ -424,12 +425,12 @@ impl BasicNode {
             }
         }
         #[cfg(feature = "basic-use-hint_naive")]{
-            return self.make_hint()
+            return self.make_hint();
         }
     }
 
     fn make_hint(&mut self) {
-        #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]{
+        #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]{
             let count = self.head.count as usize;
             if count == 0 {
                 return;
@@ -711,7 +712,7 @@ unsafe impl InnerConversionSink for BasicNode {
                 let key_len = src.get_key(i, &mut bytes[min_offset..offset], 0)?;
                 offset -= key_len;
                 #[cfg(feature = "basic-heads_true")]
-                let head = head(&bytes[offset..][..key_len][dynamic_prefix_len..]).0;
+                    let head = head(&bytes[offset..][..key_len][dynamic_prefix_len..]).0;
                 this.slots_mut()[old_count + i] = BasicSlot {
                     offset: offset as u16,
                     key_len: key_len as u16,
@@ -801,10 +802,36 @@ impl InnerNode for BasicNode {
         #[cfg(feature = "basic-heads_true")]
         self.maybe_grow_dynamic_prefix();
         let truncated = self.truncate(key);
-        let index = bc.predict().filter(|&i| {
-            i <= self.slots().len()
-                && (i == 0 || self.slots()[i - 1].key(self.as_bytes()) < truncated)
-                && (i >= self.slots().len() || truncated <= self.slots()[i].key(self.as_bytes()))
+        #[cfg(feature = "basic-heads_true")]
+            let index = bc.predict().filter(|&i| {
+            if i > self.slots().len() {
+                return false;
+            }
+            if i > 0 {
+                #[cfg(feature = "basic-heads_true")]
+                    let head_cmp = {
+                    let h = self.slots()[i - 1].head;
+                    h.cmp(&head(truncated.0).0)
+                };
+                #[cfg(feature = "basic-heads_false")]
+                    let head_cmp = Ordering::Equal;
+                if head_cmp.then_with(|| self.slots()[i - 1].key(self.as_bytes()).cmp(&truncated)) != Ordering::Less {
+                    return false;
+                }
+            }
+            if i < self.slots().len() {
+                #[cfg(feature = "basic-heads_true")]
+                    let head_cmp = {
+                    let h = self.slots()[i].head;
+                    h.cmp(&head(truncated.0).0)
+                };
+                #[cfg(feature = "basic-heads_false")]
+                    let head_cmp = Ordering::Equal;
+                if head_cmp.then_with(|| self.slots()[i].key(self.as_bytes()).cmp(&truncated)) == Ordering::Less {
+                    return false;
+                }
+            }
+            true
         })
             .unwrap_or_else(|| self.lower_bound(truncated).0);
         bc.store(index);

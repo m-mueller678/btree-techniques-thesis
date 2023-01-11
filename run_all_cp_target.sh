@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/cache.out"
+OUT="$HOME/cache-heads.out"
 touch $OUT
 
 cd ~/cp-target
