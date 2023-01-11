@@ -73,9 +73,9 @@ impl BranchCacheAccessor {
                 assert!(!self.predict_next);
                 self.predict_next = true;
             }
-            self.index += 1;
             self.active = self.active && (self.index as usize) < self.levels.len() && self.levels[self.index as usize].position as usize == position;
-            self.levels[self.index as usize - 1].store(position);
+            self.levels[self.index as usize].store(position);
+            self.index += 1;
         }
     }
 
