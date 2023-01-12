@@ -3,9 +3,9 @@ use crate::hash_leaf::HashLeaf;
 use crate::node_traits::{FenceData, InnerConversionSink, InnerConversionSource, merge_to_right};
 use crate::{FatTruncatedKey};
 use num_enum::{TryFromPrimitive};
-use std::intrinsics::transmute;
-use std::mem::{ManuallyDrop};
+use std::mem::{ManuallyDrop, transmute};
 use std::{mem, ptr};
+use std::hint::black_box;
 use std::ops::Range;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
@@ -105,7 +105,11 @@ impl BTreeNode {
     ) -> (*mut BTreeNode, *mut BTreeNode, usize) {
         let mut parent = ptr::null_mut();
         let mut index = 0;
-        bc.reset();
+        if black_box(true) {
+            bc.set_inactive();
+        } else {
+            bc.reset();
+        }
         while self.tag().is_inner() && !filter(self) {
             index = self.to_inner_mut().find_child_index(key, bc);
             parent = self;
