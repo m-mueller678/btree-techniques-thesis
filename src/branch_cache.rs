@@ -1,7 +1,7 @@
 use bytemuck::Contiguous;
 use crate::adaptive::gen_random;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct BranchCacheEntry {
     position: u16,
     hit_probability: u8,
@@ -28,6 +28,7 @@ impl BranchCacheEntry {
     }
 }
 
+#[derive(Clone)]
 pub struct BranchCacheAccessor {
     levels: [BranchCacheEntry; 4],
     index: u8,

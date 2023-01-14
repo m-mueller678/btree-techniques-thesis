@@ -15,6 +15,7 @@ use perf_event::{Counter, Group};
 use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
 use serde_json::json;
 use crate::{BTree, btree_print_info, ensure_init, PAGE_SIZE};
+use crate::branch_cache::BranchCacheAccessor;
 
 fn build_info() -> serde_json::Map<String, serde_json::Value> {
     let header = include_str!("../build-info.h");
@@ -102,6 +103,7 @@ struct Bench {
     zipf_exponent: f64,
     inserted_start: usize,
     inserted_count: usize,
+    front_count: usize,
     data: Vec<Vec<u8>>,
     payload: Vec<u8>,
     perf: Perf,
@@ -114,11 +116,11 @@ struct Bench {
 impl Bench {
     fn init(
         sample_op: WeightedIndex<usize>,
-        initial_size: usize,
         value_length: usize,
         range_length: usize,
         zipf_exponent: f64,
         mut data: Vec<Vec<u8>>,
+        front_count: usize,
     ) -> Self {
         let mut rng = Xoshiro128PlusPlus::seed_from_u64(123);
         assert!(minstant::is_tsc_available());
@@ -126,8 +128,8 @@ impl Bench {
         let mut value = vec![0u8; value_length];
         rng.fill_bytes(&mut value);
         let mut tree = BTree::new();
-        data.shuffle(&mut rng);
-        for x in &data[..initial_size] {
+        data.sort();
+        for x in &data {
             tree.insert(x, &value);
         }
         unsafe { btree_print_info(&mut tree) };
@@ -135,16 +137,17 @@ impl Bench {
             stats: Default::default(),
             sample_op,
             instruction_buffer: Vec::new(),
-            initial_size,
+            front_count,
             value_length,
             range_length,
             zipf_exponent,
             inserted_start: 0,
-            inserted_count: initial_size,
+            inserted_count: data.len(),
+            initial_size: data.len(),
             #[cfg(debug_assertions)]
             std_set: {
                 let mut s = BTreeSet::new();
-                for x in &data[..initial_size] {
+                for x in &data {
                     s.insert(x.clone());
                 }
                 s
@@ -250,27 +253,17 @@ impl Bench {
         self.instruction_buffer.clear();
     }
 
-    fn run(mut self, op_count: usize) -> ([StatAggregator; Op::CARDINALITY], Perf) {
-        for _ in 0..op_count {
-            let op = self.sample_op.sample(&mut self.rng);
-            let index = match Self::op_from_usize(op) {
-                Op::Hit | Op::Update | Op::Range => (self.inserted_start + self.inserted_count - 1 - self.zipf_sample(self.inserted_count)) % self.data.len(),
-                Op::Miss => (self.inserted_start + self.inserted_count + self.zipf_sample(self.data.len() - self.inserted_count)) % self.data.len(),
-                Op::Insert => {
-                    let index = (self.inserted_start + self.inserted_count) % self.data.len();
-                    self.inserted_count += 1;
-                    index
-                }
-                Op::Remove => {
-                    let index = self.inserted_start;
-                    self.inserted_count -= 1;
-                    self.inserted_start = (self.inserted_start + 1) % self.data.len();
-                    index
-                }
-            };
-            self.instruction_buffer.push(op as u8);
-            self.instruction_buffer.extend_from_slice(&(self.data[index].len() as u16).to_ne_bytes());
-            self.instruction_buffer.extend_from_slice(&self.data[index]);
+    fn run(mut self, iteration_count: usize) -> ([StatAggregator; Op::CARDINALITY], Perf) {
+        let mut caches = vec![BranchCacheAccessor::new(); self.front_count];
+        let front_spacing = self.data.len() / self.front_count;
+        let data_len = self.data.len();
+        for i in 0..iteration_count {
+            for j in 0..self.front_count {
+                let index = (i + j * front_spacing) % data_len;
+                self.instruction_buffer.push(Op::Hit as u8);
+                self.instruction_buffer.extend_from_slice(&(self.data[index].len() as u16).to_ne_bytes());
+                self.instruction_buffer.extend_from_slice(&self.data[index]);
+            }
             const INSTRUCTION_BUFFER_SIZE: usize = if cfg!(debug_assertions) { 1 } else { 100_000 };
             if self.instruction_buffer.len() >= INSTRUCTION_BUFFER_SIZE {
                 self.run_buffered();
@@ -302,24 +295,26 @@ pub fn bench_main() {
     }
     let (keys, data_name) = data.expect("no bench");
 
-    let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
+    let iteration_count = std::env::var("IT_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
     let value_len: usize = std::env::var("VALUE_LEN").as_deref().unwrap_or("8").parse().unwrap();
     let range_len: usize = std::env::var("RANGE_LEN").as_deref().unwrap_or("10").parse().unwrap();
+    let front_count: usize = std::env::var("FRONT_COUNT").as_deref().unwrap().parse().unwrap();
     let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("0.15").parse().unwrap();
     let op_rates: Vec<usize> = serde_json::from_str(std::env::var("OP_RATES").as_deref().unwrap_or("[40,40,5,5,5,5]")).unwrap();
     assert!(op_rates.len() == 6);
     let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
 
-    let (stats, mut perf) = Bench::init(sample_op, keys.len() / 2, value_len, range_len, zipf_exponent, keys).run(total_count);
+    let (stats, mut perf) = Bench::init(sample_op, value_len, range_len, zipf_exponent, keys, front_count).run(iteration_count);
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
-        "total_count":total_count,
+        "it_count":iteration_count,
         "value_len":value_len,
         "range_len":range_len,
         "zipf_exponent":zipf_exponent,
         "op_rates":op_rates,
         "host": host_name(),
+        "front_count":front_count,
         "run_start":  std::time::SystemTime::now()
     });
     for op in enum_iterator::all::<Op>() {
