@@ -73,7 +73,7 @@ pub unsafe extern "C" fn btree_lookup(
 ) -> *mut u8 {
     let key = slice::from_raw_parts(key, key_len as usize);
     let b_tree = &mut *b_tree;
-    b_tree.lookup(payload_len_out, key)
+    unimplemented!()
 }
 
 #[no_mangle]

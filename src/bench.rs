@@ -171,80 +171,26 @@ impl Bench {
         op_enum
     }
 
-    fn run_buffered(&mut self) {
+    fn run_buffered(&mut self, caches: &mut [BranchCacheAccessor]) {
         let mut i = 0;
         for c in &mut self.perf.counters {
             c.1.enable().unwrap();
         }
         let mut range_lookup_key_out = [0u8; PAGE_SIZE];
         while i < self.instruction_buffer.len() {
-            let op = Self::op_from_usize(self.instruction_buffer[i] as usize);
+            let cache_index = self.instruction_buffer[i] as usize;
+            let op = Op::Hit;
             let len_bytes: &[u8; 2] = self.instruction_buffer[i + 1..][..2].try_into().unwrap();
             let len = u16::from_ne_bytes(*len_bytes) as usize;
             let key = &self.instruction_buffer[i + 3..][..len];
             i += len + 3;
-            match op {
-                Op::Hit => {
-                    let mut out = 0;
-                    let found = unsafe {
-                        self.stats[op as usize].time_fn(||
-                            black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
-                        )
-                    };
-                    debug_assert!(!found.is_null());
-                }
-                Op::Miss => {
-                    let mut out = 0;
-                    let found = unsafe {
-                        self.stats[op as usize].time_fn(||
-                            black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
-                        )
-                    };
-                    debug_assert!(found.is_null());
-                }
-                Op::Update => {
-                    self.stats[op as usize].time_fn(||
-                        black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
-                    );
-                }
-                Op::Insert => {
-                    self.stats[op as usize].time_fn(||
-                        black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
-                    );
-                    #[cfg(debug_assertions)]{
-                        self.std_set.insert(key.to_owned());
-                    }
-                }
-                Op::Remove => {
-                    let found = unsafe {
-                        self.stats[op as usize].time_fn(||
-                            black_box(self.tree.remove(black_box(key)))
-                        )
-                    };
-                    #[cfg(debug_assertions)]{
-                        self.std_set.remove(key);
-                    }
-                    debug_assert!(found);
-                }
-                Op::Range => {
-                    #[cfg(debug_assertions)]
-                        let expected: Vec<&Vec<u8>> = self.std_set.range(key.to_owned()..).take(self.range_length).collect();
-                    let mut count = 0;
-                    self.stats[op as usize].time_fn(||
-                        black_box(
-                            self.tree.range_lookup(&key, range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
-                                #[cfg(debug_assertions)]{
-                                    assert!(expected[count] == &range_lookup_key_out[..key_len])
-                                }
-                                count += 1;
-                                count < self.range_length
-                            })
-                        ));
-                    #[cfg(debug_assertions)]{
-                        assert!(count == expected.len());
-                    }
-                }
-            }
+            let mut out = 0;
+            let found = unsafe {
+                self.stats[op as usize].time_fn(||
+                    black_box(self.tree.lookup(black_box(&mut out), black_box(key), &mut caches[cache_index]))
+                )
+            };
+            debug_assert!(!found.is_null());
         }
         for c in &mut self.perf.counters {
             c.1.disable().unwrap();
@@ -260,16 +206,16 @@ impl Bench {
         for i in 0..iteration_count {
             for j in 0..self.front_count {
                 let index = (i + j * front_spacing) % data_len;
-                self.instruction_buffer.push(Op::Hit as u8);
+                self.instruction_buffer.push(j.try_into().unwrap());
                 self.instruction_buffer.extend_from_slice(&(self.data[index].len() as u16).to_ne_bytes());
                 self.instruction_buffer.extend_from_slice(&self.data[index]);
             }
             const INSTRUCTION_BUFFER_SIZE: usize = if cfg!(debug_assertions) { 1 } else { 100_000 };
             if self.instruction_buffer.len() >= INSTRUCTION_BUFFER_SIZE {
-                self.run_buffered();
+                self.run_buffered(&mut caches);
             }
         }
-        self.run_buffered();
+        self.run_buffered(&mut caches);
         unsafe { btree_print_info(&mut self.tree) };
         (self.stats, self.perf)
     }
