@@ -4,27 +4,36 @@ use crate::adaptive::gen_random;
 #[derive(Default, Clone)]
 struct BranchCacheEntry {
     position: u16,
+    #[cfg(feature = "cache-accuracy_true")]
     hit_probability: u8,
 }
 
 impl BranchCacheEntry {
     #[inline]
     fn get_hint(&self) -> Option<usize> {
-        if self.hit_probability > 90 {
+        #[cfg(feature = "cache-accuracy_true")]
+        return if self.hit_probability > 90 {
             Some(self.position as usize)
         } else {
             None
-        }
+        };
+        #[cfg(feature = "cache-accuracy_false")]
+        return Some(self.position as usize);
     }
 
     #[inline]
     fn store(&mut self, position: usize) {
         const DIV: u8 = 4;
-        let update_probability = ((127u8.saturating_sub(self.hit_probability)) as u32) << 21;
+        #[cfg(feature = "cache-accuracy_true")]
+            let update_probability = ((127u8.saturating_sub(self.hit_probability)) as u32) << 21;
+        #[cfg(feature = "cache-accuracy_false")]
+            let update_probability = u32::MAX >> 1;
         if gen_random() < update_probability {
             self.position = position as u16;
         }
-        self.hit_probability = self.hit_probability - self.hit_probability / DIV + if self.position as usize == position { u8::MAX_VALUE / DIV } else { 0 };
+        #[cfg(feature = "cache-accuracy_true")]{
+            self.hit_probability = self.hit_probability - self.hit_probability / DIV + if self.position as usize == position { u8::MAX_VALUE / DIV } else { 0 };
+        }
     }
 }
 

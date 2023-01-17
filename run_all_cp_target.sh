@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/cache_sequential.out"
+OUT="$HOME/cache_sequential_nacc.out"
 touch $OUT
 
 cd ~/cp-target

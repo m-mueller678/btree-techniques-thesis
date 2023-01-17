@@ -11,9 +11,9 @@ HOST = "cascade-01"
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    "inner": ["basic","padded",  "explicit_length", "ascii","art"],
-    #"inner": ["basic"],
-    "leaf": ["basic","hash"],
+    "inner": ["basic", "padded", "explicit_length", "ascii", "art"],
+    # "inner": ["basic"],
+    "leaf": ["basic", "hash"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
@@ -29,6 +29,7 @@ FEATURES = {
     "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
     "basic-heads": ["false", "true"],
+    "cache-accuracy": ["true", "false"],
 }
 
 
@@ -117,13 +118,14 @@ def set_feature(k, v):
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
-cases = []
 # set_feature('dynamic-prefix', 'true')
 # features['dynamic-prefix'] = "false"
+cases = []
 set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
 set_feature("branch-cache", 'true')
+set_feature("cache-accuracy", 'false')
 # features["branch-cache"] = "false"
 # for inner in ["padded",  "explicit_length", "ascii","art"]:
 #     set_feature('inner', inner)
@@ -131,7 +133,8 @@ set_feature("branch-cache", 'true')
 # for adapt in ["1000", "100", "10"]:
 #     set_feature("descend-adapt-inner",adapt)
 
-assert len(cases) == 2
+assert len(cases) == 3
+
 dir = build_all(cases)
 upload(dir)
 print_uploaded()
