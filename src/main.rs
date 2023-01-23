@@ -1,6 +1,7 @@
 #![feature(is_sorted)]
 
 
+use std::fmt::format;
 use btree::{bench, PrefixTruncatedKey};
 
 
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_xoshiro::Xoshiro128PlusPlus;
 use smallvec::SmallVec;
-use btree::head_node::{AsciiHead, FullKeyHead};
+use btree::head_node::{AsciiHead, ExplicitLengthHead, FullKeyHead, FullKeyHeadNoTag, ZeroPaddedHead};
 use btree::node_traits::node_print;
 
 
@@ -117,5 +118,77 @@ fn main() {
         // force linker to keep this function, it is useful for debugging
         unsafe { node_print(ptr::null()) };
     }
-    bench::bench_main();
+
+    fn to_ascii(s:PrefixTruncatedKey)->(Option<u64>,u64){
+        (
+            AsciiHead::make_fence_head(s).map(|s|s.0),
+            AsciiHead::make_needle_head(s).0,
+        )
+    }
+    fn to_padded(s:PrefixTruncatedKey)->(Option<u64>,u64){
+        (
+            ZeroPaddedHead::<u64>::make_fence_head(s).map(|s|s.0),
+            ZeroPaddedHead::<u64>::make_needle_head(s).0,
+        )
+    }fn to_explicit_length(s:PrefixTruncatedKey)->(Option<u64>,u64){
+        (
+            ExplicitLengthHead::<u64>::make_fence_head(s).map(|s|s.0),
+            ExplicitLengthHead::<u64>::make_needle_head(s).0,
+        )
+    }
+
+    let strings=[
+        b"a".as_slice(),
+        b"\x01\x00".as_slice(),
+        b"aaaaaaaa".as_slice(),
+        b"a".as_slice(),
+        b"aaaaaaaa\x00".as_slice(),
+        b"aaaaaaaaaa".as_slice(),
+        b"a\x7fa".as_slice(),
+        b"\xff\xff\xff\xff\xff\xff\xff\xff".as_slice()
+    ];
+    for string in strings{
+        let display:String = string.iter().map(|c|{
+            if c.is_ascii_graphic(){
+                format!("{}",*c as char)
+            }else{
+                format!("\\x{:02x}",c)
+            }
+        }).collect();
+        print!("\"{}\"",display);
+        let f=to_ascii;
+        let (stored,lookup) = f(PrefixTruncatedKey(string));
+        let stored = stored.map(|s|format!("{:08b}",s)).unwrap_or("invalid".into());
+        print!("& {} & {:016b}",stored,lookup);
+        println!();
+    }
+
+    for string in [
+        [1,1].as_slice(),
+        [1,1,1,1].as_slice(),
+    ]{
+        print!("{}",format!("{:?}",string).replace("[","\\{").replace("]","\\}"));
+        let stored = ExplicitLengthHead::<u32>::make_fence_head(PrefixTruncatedKey(string)).map(|h|h.0);
+        let lookup = ExplicitLengthHead::<u32>::make_needle_head(PrefixTruncatedKey(string)).0;
+        let stored = stored.map(|s|format!("{:08x}",s)).unwrap_or("invalid".into());
+        print!("& \\texttt{{{}}} & \\texttt{{{:08x}}}",stored,lookup);
+        println!("\\\\");
+    }
+    dbg!();
+
+    for string in [
+        [1,1].as_slice(),
+        [1,1,1,1].as_slice(),
+        [1,1,1,1,0].as_slice(),
+        [1,0].as_slice(),
+        [255,255,255,255].as_slice(),
+    ]{
+        print!("{}",format!("{:?}",string).replace("[","\\{").replace("]","\\}"));
+        let stored = ZeroPaddedHead::<u32>::make_fence_head(PrefixTruncatedKey(string)).map(|h|h.0);
+        let lookup = ZeroPaddedHead::<u32>::make_needle_head(PrefixTruncatedKey(string)).0;
+        let stored = stored.map(|s|format!("{:08x}",s)).unwrap_or("invalid".into());
+        print!("& \\texttt{{{}}} & \\texttt{{{:08x}}}",stored,lookup);
+        println!("\\\\");
+    }
+    dbg!();
 }

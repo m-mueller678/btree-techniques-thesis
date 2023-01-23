@@ -80,15 +80,15 @@ unsafe impl UnsignedInt for u32 {
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct AsciiHead(u64);
+pub struct AsciiHead(pub u64);
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ExplicitLengthHead<T: UnsignedInt>(T);
+pub struct ExplicitLengthHead<T: UnsignedInt>(pub T);
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ZeroPaddedHead<T: UnsignedInt>(T);
+pub struct ZeroPaddedHead<T: UnsignedInt>(pub T);
 
 impl<'a> KeyRef<'a> for AsciiHead {
     fn common_prefix_len(self, b: Self) -> usize {

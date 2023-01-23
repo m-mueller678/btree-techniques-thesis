@@ -125,6 +125,7 @@ set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
 set_feature("branch-cache", 'true')
+configure(features);exit(0)
 set_feature("cache-accuracy", 'false')
 # features["branch-cache"] = "false"
 # for inner in ["padded",  "explicit_length", "ascii","art"]:
