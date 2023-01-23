@@ -4,7 +4,7 @@ use std::io::BufRead;
 use std::process::Command;
 use std::ptr;
 use bumpalo::Bump;
-use rand::{RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, thread_rng};
 use rand::distributions::{WeightedIndex};
 use rand::distributions::Distribution;
 use rand::prelude::SliceRandom;
@@ -13,8 +13,9 @@ use rand_xoshiro::Xoshiro128PlusPlus;
 use enum_iterator::Sequence;
 use perf_event::{Counter, Group};
 use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use crate::{BTree, btree_print_info, ensure_init, PAGE_SIZE};
+use crate::node_stats::btree_to_inner_node_stats;
 
 fn build_info() -> serde_json::Map<String, serde_json::Value> {
     let header = include_str!("../build-info.h");
@@ -300,41 +301,24 @@ pub fn bench_main() {
         let file = std::io::BufReader::new(std::fs::File::open(&var).unwrap());
         data = Some((file.lines().map(|l| { l.unwrap().into_bytes() }).collect(), format!("FILE-{}", var)));
     }
-    let (keys, data_name) = data.expect("no bench");
+    let (mut keys, data_name) = data.expect("no bench");
 
-    let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
-    let value_len: usize = std::env::var("VALUE_LEN").as_deref().unwrap_or("8").parse().unwrap();
-    let range_len: usize = std::env::var("RANGE_LEN").as_deref().unwrap_or("10").parse().unwrap();
-    let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("0.15").parse().unwrap();
-    let op_rates: Vec<usize> = serde_json::from_str(std::env::var("OP_RATES").as_deref().unwrap_or("[40,40,5,5,5,5]")).unwrap();
-    assert!(op_rates.len() == 6);
-    let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
-
-    let (stats, mut perf) = Bench::init(sample_op, keys.len() / 2, value_len, range_len, zipf_exponent, keys).run(total_count);
+    let mut tree = BTree::new();
+    keys.shuffle(&mut thread_rng());
+    for k in keys {
+        tree.insert(&k, &[0u8; 8]);
+    }
+    let node_stats = btree_to_inner_node_stats(&tree);
+    let tag_counts: counter::Counter<_> = node_stats.iter().map(|n| n.tag).collect();
+    let tag_counts: Map::<String, Value> = tag_counts.iter().map(|x| (format!("{:?}", x.0), Value::Number((*x.1).into()))).collect();
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
-        "total_count":total_count,
-        "value_len":value_len,
-        "range_len":range_len,
-        "zipf_exponent":zipf_exponent,
-        "op_rates":op_rates,
+        "tag_counts":tag_counts,
         "host": host_name(),
         "run_start":  std::time::SystemTime::now()
     });
-    for op in enum_iterator::all::<Op>() {
-        let stat = &stats[op as usize];
-        let op_count = stat.count;
-        let average_time = stat.sum as f64 / stat.count as f64;
-        let op_info = json!({
-            "op": format!("{op:?}"),
-            "op_count": op_count,
-            "time": average_time,
-        });
-        print_joint_objects(&[&build_info, &common_info, &op_info]);
-    }
-    let perf_info = perf.to_json();
-    print_joint_objects(&[&build_info, &common_info, &perf_info]);
+    print_joint_objects(&[&build_info, &common_info]);
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {
