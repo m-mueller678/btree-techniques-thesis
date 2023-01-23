@@ -117,21 +117,21 @@ def set_feature(k, v):
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
+set_feature('dynamic-prefix', 'true')
+features['dynamic-prefix'] = "false"
 cases = []
-# set_feature('dynamic-prefix', 'true')
-# features['dynamic-prefix'] = "false"
 set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
-set_feature("branch-cache", 'true')
+# set_feature("branch-cache", 'true')
 # features["branch-cache"] = "false"
-# for inner in ["padded",  "explicit_length", "ascii","art"]:
-#     set_feature('inner', inner)
+for inner in ["padded", "explicit_length", "ascii", "art"]:
+    set_feature('inner', inner)
 # features["inner"] = "basic"
 # for adapt in ["1000", "100", "10"]:
 #     set_feature("descend-adapt-inner",adapt)
 
-assert len(cases) == 2
+assert len(cases) == 5
 dir = build_all(cases)
 upload(dir)
 print_uploaded()
