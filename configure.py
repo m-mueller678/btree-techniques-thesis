@@ -123,12 +123,11 @@ cases = []
 set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
-set_feature("branch-cache", 'true')
+# set_feature("branch-cache", 'true')
 # features["branch-cache"] = "false"
-for inner in ["padded", "explicit_length", "ascii", "art"]:
-    set_feature('inner', inner)
-configure(features);
-exit(0)
+# for inner in ["padded", "explicit_length", "ascii", "art"]:
+#    set_feature('inner', inner)
+set_feature('inner', 'art')
 # features["inner"] = "basic"
 # for adapt in ["1000", "100", "10"]:
 #     set_feature("descend-adapt-inner",adapt)
