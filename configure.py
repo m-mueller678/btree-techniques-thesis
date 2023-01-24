@@ -125,8 +125,10 @@ set_feature("leaf", "hash")
 # features["strip-prefix"] = "false"
 set_feature("branch-cache", 'true')
 # features["branch-cache"] = "false"
-# for inner in ["padded",  "explicit_length", "ascii","art"]:
-#     set_feature('inner', inner)
+for inner in ["padded", "explicit_length", "ascii", "art"]:
+    set_feature('inner', inner)
+configure(features);
+exit(0)
 # features["inner"] = "basic"
 # for adapt in ["1000", "100", "10"]:
 #     set_feature("descend-adapt-inner",adapt)

@@ -61,6 +61,8 @@ const NODE_REF_IS_RANGE: u16 = 1 << 15;
 const NODE_TAG_DECISION: u16 = 0xa3cf;
 const NODE_TAG_SPAN: u16 = 0x1335;
 
+const MAX_CHILDREN: usize = 4;
+
 impl ArtNode {
     #[inline(always)]
     fn layout(range_array_len: usize) -> LayoutInfo {
@@ -179,20 +181,30 @@ impl ArtNode {
         }
     }
 
+    fn partition<F: Fn(usize) -> Option<u8>>(keys: &F, key_range: Range<usize>) -> SmallVec<[u16; MAX_CHILDREN - 1]> {
+        let mut splits = SmallVec::new();
+        let mut range_start = key_range.start;
+        for i in range_start + 1..key_range.end {
+            if (i == range_start + 1 && keys(i - 1).is_none())
+                || keys(i - 1).unwrap() != keys(i).unwrap() {
+                splits.push(i as u16);
+                range_start = i;
+            }
+        }
+        splits
+    }
+
     // TODO: how to handle [[],[0,...],[0,...],...]?
     //       0 key cannot split -> cannot create span node in next step
     //       decision four cases: less, equal, greater, empty?
     //       span four cases: prefix less, prefix greater, same as prefix, prefix is prefix of key
     fn construct_inner_decision_node<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
-        let mut children = SmallVec::<[u16; 64]>::new();
+        let mut children = SmallVec::<[u16; MAX_CHILDREN]>::new();
         {
             let mut range_start = key_range.start;
-            for i in range_start + 1..key_range.end {
-                if (i == range_start + 1 && keys(self, i - 1).len() == prefix_len)
-                    || keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
-                    children.push(self.construct::<F>(keys, range_start..i, prefix_len)?);
-                    range_start = i;
-                }
+            for i in Self::partition(&|i| keys(self, i).get(prefix_len).copied(), key_range.clone()).iter().map(|x| *x as usize) {
+                children.push(self.construct::<F>(keys, range_start..i, prefix_len)?);
+                range_start = i;
             }
             children.push(self.construct::<F>(keys, range_start..key_range.end, prefix_len)?);
         }
