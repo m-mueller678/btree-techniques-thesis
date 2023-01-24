@@ -309,16 +309,13 @@ pub fn bench_main() {
         tree.insert(&k, &[0u8; 8]);
     }
     let node_stats = btree_to_inner_node_stats(&tree);
-    let tag_counts: counter::Counter<_> = node_stats.iter().map(|n| n.tag).collect();
-    let tag_counts: Map::<String, Value> = tag_counts.iter().map(|x| (format!("{:?}", x.0), Value::Number((*x.1).into()))).collect();
-    let build_info = build_info().into();
-    let common_info = json!({
-        "data":data_name,
-        "tag_counts":tag_counts,
-        "host": host_name(),
-        "run_start":  std::time::SystemTime::now()
-    });
-    print_joint_objects(&[&build_info, &common_info]);
+    let inner_length_counts: counter::Counter::<_> = node_stats.iter().flat_map(|n| n.keys.iter().map(|k| k.len())).collect();
+    for (k, c) in inner_length_counts.iter() {
+        print_joint_objects(&[&json! {{
+            "k":k,
+            "c":c,
+        }}])
+    }
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {
