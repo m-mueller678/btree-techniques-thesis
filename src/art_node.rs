@@ -182,15 +182,48 @@ impl ArtNode {
     }
 
     fn partition<F: Fn(usize) -> Option<u8>>(keys: &F, key_range: Range<usize>) -> SmallVec<[u16; MAX_CHILDREN - 1]> {
-        let mut splits = SmallVec::new();
-        let mut range_start = key_range.start;
-        for i in range_start + 1..key_range.end {
-            if (i == range_start + 1 && keys(i - 1).is_none())
-                || keys(i - 1).unwrap() != keys(i).unwrap() {
-                splits.push(i as u16);
-                range_start = i;
+        assert!(MAX_CHILDREN == 4);
+        let is_candidate = |i| i == key_range.start + 1 && keys(i - 1).is_none() || keys(i - 1).unwrap() != keys(i).unwrap();
+        let find_best_split = |r: Range<usize>| {
+            let mut low = (r.start + r.end) / 2;
+            let mut high = low + 1;
+            loop {
+                if r.start == low {
+                    for i in high..r.end {
+                        if is_candidate(i) {
+                            return Some(i)
+                        }
+                    }
+                    return None
+                }
+                if is_candidate(low) {
+                    return Some(low)
+                }
+                low -= 1;
+                if r.end == high {
+                    for i in (r.start + 1..=low).rev() {
+                        if is_candidate(i) {
+                            return Some(i)
+                        }
+                    }
+                    return None
+                }
+                if is_candidate(high) {
+                    return Some(high)
+                }
+                high += 1;
             }
+        };
+        let mut splits = SmallVec::new();
+        let center_split = find_best_split(key_range.clone()).unwrap();
+        if let Some(h1) = find_best_split(key_range.start..center_split) {
+            splits.push(h1 as u16);
         }
+        splits.push(center_split as u16);
+        if let Some(h2) = find_best_split(center_split..key_range.end) {
+            splits.push(h2 as u16);
+        }
+        assert!(splits.len() <= MAX_CHILDREN - 1);
         splits
     }
 
@@ -200,9 +233,10 @@ impl ArtNode {
     //       span four cases: prefix less, prefix greater, same as prefix, prefix is prefix of key
     fn construct_inner_decision_node<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         let mut children = SmallVec::<[u16; MAX_CHILDREN]>::new();
+        let subrange_boundries = Self::partition(&|i| keys(self, i).get(prefix_len).copied(), key_range.clone());
         {
             let mut range_start = key_range.start;
-            for i in Self::partition(&|i| keys(self, i).get(prefix_len).copied(), key_range.clone()).iter().map(|x| *x as usize) {
+            for i in subrange_boundries.iter().map(|x| *x as usize) {
                 children.push(self.construct::<F>(keys, range_start..i, prefix_len)?);
                 range_start = i;
             }
@@ -216,15 +250,10 @@ impl ArtNode {
             self.write_to(pos, NODE_TAG_DECISION.to_ne_bytes().as_slice());
             self.write_to(pos + 2, (key_count as u16).to_ne_bytes().as_slice());
             {
-                let range_start = key_range.start;
                 let mut next_write = 0;
-                for i in range_start + 1..key_range.end {
-                    if
-                    (i == range_start + 1 && keys(self, i - 1).len() == prefix_len)
-                        || keys(self, i - 1)[prefix_len] != keys(self, i)[prefix_len] {
-                        reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4 + next_write] = keys(self, i)[prefix_len];
-                        next_write += 1;
-                    }
+                for i in subrange_boundries.iter().map(|x| *x as usize) {
+                    reinterpret_mut::<Self, [u8; PAGE_SIZE]>(self)[pos + 4 + next_write] = keys(self, i)[prefix_len];
+                    next_write += 1;
                 }
             }
             self.write_to(pos + 4 + key_array_size, bytemuck::cast_slice::<u16, u8>(children.as_slice()));
