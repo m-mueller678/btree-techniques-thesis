@@ -3,6 +3,7 @@ use std::fmt::{Debug, Formatter};
 use std::mem::{align_of, size_of};
 use std::ops::Range;
 use std::ptr;
+use std::sync::atomic::AtomicUsize;
 use smallvec::SmallVec;
 use crate::{BTreeNode, PAGE_SIZE, PrefixTruncatedKey};
 use crate::branch_cache::BranchCacheAccessor;
@@ -63,6 +64,8 @@ const NODE_TAG_SPAN: u16 = 0x1335;
 
 const MAX_CHILDREN: usize = 4;
 
+const MIN_SUBRANGE_SIZE: usize = 3;
+
 impl ArtNode {
     #[inline(always)]
     fn layout(range_array_len: usize) -> LayoutInfo {
@@ -92,7 +95,7 @@ impl ArtNode {
 
     fn construct<F: Fn(&Self, usize) -> PrefixTruncatedKey>(&mut self, keys: &F, key_range: Range<usize>, prefix_len: usize) -> Result<u16, ()> {
         let original_start = key_range.start;
-        if key_range.len() < 3 {
+        if key_range.len() <= MIN_SUBRANGE_SIZE {
             return Ok(self.push_range_array_entry(key_range)? | NODE_REF_IS_RANGE);
         }
         let full_prefix = prefix_len + common_prefix_len(&keys(self, key_range.start).0[prefix_len..], &keys(self, key_range.end - 1).0[prefix_len..]);
@@ -448,6 +451,15 @@ impl InnerNode for ArtNode {
                 let range_index = range_index as usize;
                 let key_skip = key.len() - remaining_key_len;
                 let range = self.range_array()[range_index - 1] as usize..self.range_array()[range_index] as usize;
+                {
+                    static COUNT: AtomicUsize = AtomicUsize::new(0);
+                    static LEN_SUM: AtomicUsize = AtomicUsize::new(0);
+                    let sum = LEN_SUM.fetch_add(range.len(), std::sync::atomic::Ordering::Relaxed);
+                    let count = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if count % (1 << 12) == 0 {
+                        eprintln!("{}", sum as f64 / count as f64);
+                    }
+                }
                 debug_assert!(range.end == self.head.key_count as usize || key <= self.page_indirection_vector()[range.end].key(self));
                 debug_assert!(range.start == 0 || self.page_indirection_vector()[range.start - 1].key(self) < key);
                 let index = range.start as usize + match self.page_indirection_vector()[range].binary_search_by_key(&&key.0[key_skip..], |e: &PageIndirectionVectorEntry| {
