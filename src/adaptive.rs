@@ -32,10 +32,6 @@ pub fn adapt_inner(node: &mut BTreeNode) {
         };
         let dyn_node = node.to_inner();
         let key_count = dyn_node.key_count();
-        if key_count < 20 {
-            // small nodes have too few keys to make a good decision on
-            return;
-        }
         let max_len = dyn_node.get_key_length_max(0..key_count);
         let mut contains_known_trailing_zeros = false;
         let mut tmp = BTreeNode::new_uninit();

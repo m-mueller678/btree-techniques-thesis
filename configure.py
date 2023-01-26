@@ -127,12 +127,13 @@ set_feature("leaf", "hash")
 # features["branch-cache"] = "false"
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
-set_feature('inner', 'art')
-# features["inner"] = "basic"
-# for adapt in ["1000", "100", "10"]:
-#     set_feature("descend-adapt-inner",adapt)
-
-assert len(cases) == 2
+set_feature('inner', "explicit_length")
+features["inner"] = "basic"
+for adapt in ["1000", "100", "10"]:
+    set_feature("descend-adapt-inner", adapt)
+configure(features);
+exit(0)
+assert len(cases) == 5
 dir = build_all(cases)
 upload(dir)
 print_uploaded()

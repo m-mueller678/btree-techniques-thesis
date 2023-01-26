@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/art.out"
+OUT="$HOME/adapt-inner-eager.out"
 touch $OUT
 
 cd ~/cp-target
