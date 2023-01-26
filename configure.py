@@ -131,8 +131,6 @@ set_feature('inner', "explicit_length")
 features["inner"] = "basic"
 for adapt in ["1000", "100", "10"]:
     set_feature("descend-adapt-inner", adapt)
-configure(features);
-exit(0)
 assert len(cases) == 5
 dir = build_all(cases)
 upload(dir)

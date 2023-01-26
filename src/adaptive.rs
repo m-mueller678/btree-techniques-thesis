@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use rand::{Rng, SeedableRng};
 use crate::BTreeNode;
-use crate::head_node::{U32ExplicitHeadNode, U64ExplicitHeadNode};
+use crate::head_node::{U32ExplicitHeadNode, U32ZeroPaddedHeadNode, U64ExplicitHeadNode, U64ZeroPaddedHeadNode};
 use crate::node_traits::{InnerConversionSink};
 use crate::vtables::BTreeNodeTag;
 use rand::distributions::Distribution;
@@ -41,7 +41,7 @@ pub fn adapt_inner(node: &mut BTreeNode) {
                 break 'try_nodes true;
             }
             if max_len <= 4 && existing_head_len > 4 {
-                if U32ExplicitHeadNode::create(&mut tmp, dyn_node).is_ok() {
+                if U32ZeroPaddedHeadNode::create(&mut tmp, dyn_node).is_ok() {
                     break 'try_nodes true;
                 } else {
                     contains_known_trailing_zeros = true;
@@ -52,7 +52,7 @@ pub fn adapt_inner(node: &mut BTreeNode) {
                 break 'try_nodes true;
             }
             if max_len <= 8 && existing_head_len > 8 && !contains_known_trailing_zeros {
-                if U64ExplicitHeadNode::create(&mut tmp, dyn_node).is_ok() {
+                if U64ZeroPaddedHeadNode::create(&mut tmp, dyn_node).is_ok() {
                     break 'try_nodes true;
                 }
             }
