@@ -310,7 +310,9 @@ pub fn bench_main() {
     assert!(op_rates.len() == 6);
     let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
 
-    let (stats, mut perf) = Bench::init(sample_op, keys.len() / 2, value_len, range_len, zipf_exponent, keys).run(total_count);
+    let initial_size = if std::env::var("START_EMPTY").as_deref().unwrap_or("0") == "1" { 0 } else { keys.len() / 2 };
+
+    let (stats, mut perf) = Bench::init(sample_op, initial_size, value_len, range_len, zipf_exponent, keys).run(total_count);
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
