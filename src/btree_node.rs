@@ -7,6 +7,8 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use rand::{Rng, thread_rng};
+use rand::prelude::SliceRandom;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
 use crate::branch_cache::BranchCacheAccessor;
@@ -75,7 +77,84 @@ impl AdaptionState {
     }
 }
 
+const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.1;
+const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.1;
+const LEAVE_KEY_WEIGHT: f64 = 0.1;
+const LEAVE_CONVERT_WEIGHT: f64 = 0.1;
+const LEAVE_ADAPTION_RANGE: u8 = 0;
+const BIT_21: u64 = 1 << 21;
+
 impl BTreeNode {
+    fn leave_convert_common(&mut self, residual_random: u64) {
+        let rand_a = residual_random & (BIT_21 - 1);
+        let rand_b = (residual_random >> 21) & (BIT_21 - 1);
+        const KEY_THESHOLD: u64 = (LEAVE_KEY_WEIGHT * BIT_21 as f64) as u64;
+        const CONVERT_THESHOLD: u64 = (LEAVE_CONVERT_WEIGHT * BIT_21 as f64) as u64;
+        let rng = &mut thread_rng();
+        if rand_a < KEY_THESHOLD {
+            let mut short_key_count = (0..8).filter_map(|_| unsafe {
+                match self.tag() {
+                    BTreeNodeTag::BasicLeaf => {
+                        self.basic.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
+                    }
+                    BTreeNodeTag::HashLeaf => {
+                        self.hash_leaf.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
+                    }
+                    _ => unreachable!()
+                }
+            }).count();
+            let is_short = short_key_count >= 7;
+            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 0 } else { 128 };
+        }
+        if rand_b < CONVERT_THESHOLD {
+            match self.tag() {
+                BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
+                    HashLeaf::from_basic(self)
+                }
+                BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
+                    use std::sync::atomic::*;
+                    let is_err = HashLeaf::to_basic(self).is_err();
+                    static TOTAL: AtomicUsize = AtomicUsize::new(0);
+                    static FAILED: AtomicUsize = AtomicUsize::new(0);
+                    let total = TOTAL.fetch_add(1, Ordering::Relaxed);
+                    let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
+                    if total % 1024 == 0 {
+                        eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
+                    }
+                }
+                _ => unreachable!()
+            }
+        }
+    }
+
+    pub fn leave_notify_point_op(&mut self) {
+        #[cfg(feature = "leaf_adapt")]{
+            const THRESHOLD: u64 = (LEAVE_NOTIFY_POINT_WEIGHT * BIT_21 as f64) as u64;
+            let rand = thread_rng().gen::<u64>();
+            if rand & (BIT_21 - 1) < THRESHOLD {
+                let head = self.head_mut();
+                if head.adaption_state.0 % 128 > 0 {
+                    head.adaption_state.0 -= 1;
+                }
+                self.leave_convert_common(rand >> 21)
+            }
+        }
+    }
+
+    pub fn leave_notify_range_op(&mut self) {
+        #[cfg(feature = "leaf_adapt")]{
+            const THRESHOLD: u64 = (LEAVE_NOTIFY_RANGE_WEIGHT * BIT_21 as f64) as u64;
+            let rand = thread_rng().gen::<u64>();
+            if rand & (BIT_21 - 1) < THRESHOLD {
+                let head = self.head_mut();
+                if head.adaption_state.0 % 128 < LEAVE_ADAPTION_RANGE {
+                    head.adaption_state.0 += 1;
+                }
+                self.leave_convert_common(rand >> 21)
+            }
+        }
+    }
+
     pub fn write_inner<N: InnerConversionSink>(&mut self, src: N) -> &mut N {
         unsafe {
             ptr::copy_nonoverlapping((&src) as *const N as *const Self, self, 1);
@@ -90,6 +169,13 @@ impl BTreeNode {
 
     pub fn tag(&self) -> BTreeNodeTag {
         BTreeNodeTag::try_from_primitive(unsafe { self.raw_bytes[0] }).unwrap()
+    }
+
+    pub fn head_mut(&mut self) -> &mut BTreeNodeHead {
+        // this method is intended for dynamic leave layout selection
+        // interpretation of head is different for inner and leave nodes
+        debug_assert!(self.tag().is_leaf());
+        unsafe { &mut *(self as *mut BTreeNode as *mut BTreeNodeHead) }
     }
 
     pub fn adaption_state(&mut self) -> &mut AdaptionState {
@@ -143,7 +229,7 @@ impl BTreeNode {
     pub fn new_leaf() -> *mut BTreeNode {
         unsafe {
             let leaf = Self::alloc();
-            if cfg!(feature = "leaf_hash") {
+            if cfg!(feature = "leaf_hash") || cfg!(feature = "leaf_adapt") {
                 (*leaf).hash_leaf = ManuallyDrop::new(HashLeaf::new())
             } else if cfg!(feature = "leaf_basic") {
                 (*leaf).basic = BasicNode::new_leaf();

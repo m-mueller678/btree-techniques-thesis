@@ -1,8 +1,10 @@
 use crate::{BTreeNode, op_count, PAGE_SIZE};
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::util::trailing_bytes;
 use op_count::count_op;
+use crate::hash_leaf::HashLeaf;
 
 
 pub struct BTree {
@@ -26,6 +28,7 @@ impl BTree {
         unsafe {
             let (node, parent, pos) = (&mut *self.root).descend(key, |_| false, &mut self.branch_cache);
             let node = &mut *node;
+            node.leave_notify_point_op();
             if node.to_leaf_mut().insert(key, payload).is_ok() {
                 return;
             }
@@ -40,6 +43,7 @@ impl BTree {
         tracing::info!("lookup {key:?}");
         let (node, _, _) = (*self.root).descend(key, |_| false, &mut self.branch_cache);
         let node = &mut *node;
+        node.leave_notify_point_op();
         if let Some(data) = node.to_leaf_mut().lookup(key) {
             ptr::write(payload_len_out, data.len() as u64);
             data.as_mut_ptr()
@@ -99,6 +103,7 @@ impl BTree {
         loop {
             let (node, parent, index) = (&mut *self.root).descend(key, |n| n == merge_target, &mut self.branch_cache);
             if merge_target.is_null() {
+                (&mut *node).leave_notify_point_op();
                 let not_found = (&mut *node).to_leaf_mut().remove(key).is_none();
                 self.validate();
                 if not_found {
@@ -148,6 +153,7 @@ impl BTree {
                     parent = Some(node_inner);
                     node = child;
                 } else {
+                    (&mut *node).leave_notify_range_op();
                     unsafe {
                         if !node.to_leaf_mut().range_lookup(&start_key_buffer[..start_key_len], key_out, callback) {
                             return;
@@ -178,6 +184,7 @@ impl BTree {
     }
 
     pub fn range_lookup_desc(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        todo!("implement leave adaption");
         count_op();
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
@@ -198,9 +205,6 @@ impl BTree {
                     node = child;
                 } else {
                     unsafe {
-                        if !node.to_leaf_mut().range_lookup_desc(&start_key_buffer[..start_key_len], key_out, callback) {
-                            return;
-                        }
                         if let Some(p) = parent {
                             let fence_data = p.fences();
                             let count = p.key_count();

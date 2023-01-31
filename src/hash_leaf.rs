@@ -1,17 +1,22 @@
 use crate::find_separator::find_separator;
-use crate::node_traits::{FenceData, FenceRef, InnerNode, LeafNode, Node};
-use crate::util::{MergeFences, partial_restore, short_slice, SplitFences};
+use crate::node_traits::{FenceData, FenceRef, InnerConversionSource, InnerNode, LeafNode, Node};
+use crate::util::{head, MergeFences, partial_restore, reinterpret_mut, short_slice, SplitFences};
 use crate::{BTreeNode, FatTruncatedKey, PAGE_SIZE, PrefixTruncatedKey};
 use std::io::Write;
 use std::mem::{align_of, ManuallyDrop, MaybeUninit, size_of, transmute};
+use std::ptr;
 use std::simd::SimdPartialEq;
+use libc::key_t;
+use crate::basic_node::{BasicNode, BasicNodeHead, BasicSlot};
 use crate::btree_node::{AdaptionState, BTreeNodeHead};
 use crate::vtables::BTreeNodeTag;
+use crate::basic_node::FenceKeySlot;
+
 
 #[derive(Clone, Copy)]
-struct HashSlot {
+pub struct HashSlot {
     offset: u16,
-    key_len: u16,
+    pub key_len: u16,
     val_len: u16,
 }
 
@@ -23,12 +28,6 @@ impl HashSlot {
     pub fn value<'a>(&self, page: &'a [u8; PAGE_SIZE]) -> &'a [u8] {
         short_slice(page, self.offset + self.key_len, self.val_len)
     }
-}
-
-#[derive(Clone)]
-struct FenceKeySlot {
-    offset: u16,
-    len: u16,
 }
 
 #[derive(Clone)]
@@ -116,7 +115,7 @@ impl HashLeaf {
         transmute(self as *mut Self)
     }
 
-    fn slots(&self) -> &[HashSlot] {
+    pub fn slots(&self) -> &[HashSlot] {
         unsafe {
             std::slice::from_raw_parts(
                 (self as *const Self as *const u8)
@@ -535,6 +534,85 @@ impl HashLeaf {
                 debug_assert!(index == 0 || key > self.slots()[index - 1].key(self.as_bytes()));
                 (index, search_result.is_ok())
             }
+        }
+    }
+
+    fn from_basic_ext(src: &BasicNode) -> Self {
+        let mut dst = HashLeaf {
+            head: HashLeafHead {
+                head: BTreeNodeHead { tag: BTreeNodeTag::HashLeaf, adaption_state: src.head.head.adaption_state },
+                count: src.head.count,
+                sorted_count: src.head.count,
+                lower_fence: FenceKeySlot { offset: 0, len: 0 },
+                upper_fence: FenceKeySlot { offset: 0, len: 0 },
+                space_used: 0,
+                data_offset: PAGE_SIZE as u16,
+                prefix_len: 0,
+            },
+            data: [0u8; PAGE_SIZE - size_of::<HashLeafHead>()],
+        };
+        dst.set_fences(src.fences());
+        for (i, s) in src.slots().iter().enumerate() {
+            dst.store_key_value(i, s.key(src.as_bytes()), s.value(src.as_bytes()))
+        }
+        dst
+    }
+
+    pub fn to_basic(node: &mut BTreeNode) -> Result<(), ()> {
+        unsafe {
+            let hash = reinterpret_mut::<BTreeNode, HashLeaf>(node);
+            let basic_space_use = size_of::<BasicNodeHead>() + hash.head.count as usize * size_of::<BasicSlot>();
+            if (hash.head.data_offset as usize) < basic_space_use {
+                if PAGE_SIZE - (hash.head.space_used as usize) < basic_space_use {
+                    hash.compactify();
+                }
+                if (hash.head.data_offset as usize) < basic_space_use {
+                    return Err(());
+                }
+            }
+            hash.sort();
+            let count = hash.head.count;
+            debug_assert!(size_of::<BasicSlot>() >= size_of::<HashSlot>());
+            debug_assert!(size_of::<BasicNodeHead>() >= size_of::<HashLeafHead>());
+            for i in (0..count as usize).rev() {
+                let hash_slot = reinterpret_mut::<BTreeNode, HashLeaf>(node).slots()[i];
+                let basic = reinterpret_mut::<BTreeNode, BasicNode>(node);
+                let basic_slot = BasicSlot {
+                    head: head(hash_slot.key(basic.as_bytes()).0).0,
+                    offset: hash_slot.offset,
+                    key_len: hash_slot.key_len,
+                    val_len: hash_slot.val_len,
+                };
+                basic.slots_mut()[i] = basic_slot;
+            }
+            let hash_head = ptr::read(&reinterpret_mut::<BTreeNode, HashLeaf>(node).head);
+            let basic = reinterpret_mut::<BTreeNode, BasicNode>(node);
+            basic.head = BasicNodeHead {
+                head: BTreeNodeHead { tag: BTreeNodeTag::BasicLeaf, adaption_state: hash_head.head.adaption_state },
+                /// only used in inner nodes, points to last child
+                count: hash_head.count,
+                space_used: hash_head.space_used,
+                data_offset: hash_head.data_offset,
+                upper: ptr::null_mut(),
+                lower_fence: hash_head.lower_fence,
+                upper_fence: hash_head.upper_fence,
+                prefix_len: hash_head.prefix_len,
+                dynamic_prefix_len: 0,
+                #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]
+                hint: [0; crate::basic_node::HINT_COUNT],
+            };
+            basic.make_hint();
+            reinterpret_mut::<BTreeNode, BasicNode>(node).validate();
+            Ok(())
+        }
+    }
+
+    pub fn from_basic(node: &mut BTreeNode) {
+        unsafe {
+            let mut tmp = Self::from_basic_ext(&node.basic);
+            let dst = reinterpret_mut::<BTreeNode, HashLeaf>(node);
+            *dst = tmp;
+            dst.validate();
         }
     }
 }

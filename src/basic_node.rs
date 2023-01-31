@@ -39,29 +39,29 @@ impl BasicSlot {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct FenceKeySlot {
-    offset: u16,
-    len: u16,
+pub struct FenceKeySlot {
+    pub offset: u16,
+    pub len: u16,
 }
 
-const HINT_COUNT: usize = 16;
+pub const HINT_COUNT: usize = 16;
 const DYNAMIC_PREFIX: bool = cfg!(feature = "dynamic-prefix_true");
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct BasicNodeHead {
-    head: BTreeNodeHead,
+    pub head: BTreeNodeHead,
     /// only used in inner nodes, points to last child
-    count: u16,
-    space_used: u16,
-    data_offset: u16,
-    upper: *mut BTreeNode,
-    lower_fence: FenceKeySlot,
-    upper_fence: FenceKeySlot,
-    prefix_len: u16,
-    dynamic_prefix_len: u16,
-    #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]
-    hint: [u32; HINT_COUNT],
+    pub count: u16,
+    pub space_used: u16,
+    pub data_offset: u16,
+    pub upper: *mut BTreeNode,
+    pub lower_fence: FenceKeySlot,
+    pub upper_fence: FenceKeySlot,
+    pub prefix_len: u16,
+    pub dynamic_prefix_len: u16,
+    #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]
+    pub hint: [u32; HINT_COUNT],
 }
 
 #[derive(Clone, Copy)]
@@ -74,8 +74,8 @@ pub union BasicNodeData {
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct BasicNode {
-    head: BasicNodeHead,
-    data: BasicNodeData,
+    pub head: BasicNodeHead,
+    pub data: BasicNodeData,
 }
 
 impl BasicNode {
@@ -371,7 +371,7 @@ impl BasicNode {
         };
     }
 
-    fn store_key_value(
+    pub fn store_key_value(
         &mut self,
         slot_id: usize,
         prefix_truncated_key: PrefixTruncatedKey,
@@ -428,8 +428,8 @@ impl BasicNode {
         }
     }
 
-    fn make_hint(&mut self) {
-        #[cfg(any(feature = "basic-use-hint_true",feature = "basic-use-hint_naive"))]{
+    pub fn make_hint(&mut self) {
+        #[cfg(any(feature = "basic-use-hint_true", feature = "basic-use-hint_naive"))]{
             let count = self.head.count as usize;
             if count == 0 {
                 return;

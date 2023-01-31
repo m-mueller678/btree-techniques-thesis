@@ -11,9 +11,9 @@ HOST = "cascade-01"
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
     "head-early-abort-create": ["false"],
-    "inner": ["basic","padded",  "explicit_length", "ascii","art"],
-    #"inner": ["basic"],
-    "leaf": ["basic","hash"],
+    "inner": ["basic", "padded", "explicit_length", "ascii", "art"],
+    # "inner": ["basic"],
+    "leaf": ["basic", "hash", "adapt"],
     # "leaf" : ["hash","basic"],
     # "hash-leaf-simd": ["32", "64"],
     "hash-leaf-simd": ["32"],
@@ -117,7 +117,6 @@ def set_feature(k, v):
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
-cases = []
 # set_feature('dynamic-prefix', 'true')
 # features['dynamic-prefix'] = "false"
 set_feature("leaf", "hash")
@@ -127,11 +126,16 @@ set_feature("leaf", "hash")
 # features["branch-cache"] = "false"
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
+cases = []
 set_feature('inner', "explicit_length")
-features["inner"] = "basic"
-for adapt in ["1000", "100", "10"]:
-    set_feature("descend-adapt-inner", adapt)
-assert len(cases) == 5
+set_feature("leaf", "adapt")
+# for adapt in ["1000", "100", "10"]:
+#    set_feature("descend-adapt-inner", adapt)
+assert len(cases) == 2
+
+configure(features);
+exit(0)
+
 dir = build_all(cases)
 upload(dir)
 print_uploaded()
