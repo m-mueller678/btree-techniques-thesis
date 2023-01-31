@@ -120,7 +120,7 @@ pub static HASH_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
 impl TimeController {
     const EPOCH_LEN: usize = 2_500_000;
     const EPOCH_PER_SWITCH: usize = 100;
-    const SWITCH_PERIOD_COUNT: usize = 3;
+    const SWITCH_PERIOD_COUNT: usize = 5;
     fn new() -> Self {
         TimeController {
             time: 0,
