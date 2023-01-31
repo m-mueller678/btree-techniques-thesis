@@ -106,7 +106,7 @@ impl BTreeNode {
                 }
             }).count();
             let is_short = short_key_count >= 7;
-            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 0 } else { 128 };
+            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
         }
         if rand_b < CONVERT_THESHOLD {
             match self.tag() {
