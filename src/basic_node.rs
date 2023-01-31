@@ -287,6 +287,7 @@ impl BasicNode {
     fn compactify(&mut self) {
         let should = self.free_space_after_compaction();
         let mut tmp = Self::new(self.head.head.tag.is_leaf());
+        tmp.head.head.adaption_state = self.head.head.adaption_state;
         tmp.set_fences(self.fences());
         self.copy_key_value_range(self.slots(), &mut tmp, FatTruncatedKey::full(&[]));
         tmp.head.upper = self.head.upper;
@@ -486,6 +487,7 @@ impl BasicNode {
             return Err(());
         }
         let mut tmp = BasicNode::new(self.head.head.tag.is_leaf());
+        tmp.head.head.adaption_state = right.head.head.adaption_state;
         tmp.head.upper = right.head.upper;
         let merge_fences = MergeFences::new(self.fences(), separator, right.fences());
         tmp.set_fences(merge_fences.fences());
@@ -621,6 +623,8 @@ unsafe impl Node for BasicNode {
         let mut split_fences = SplitFences::new(self.fences(), truncated_sep_key, parent_prefix_len, self.prefix(key_in_node));
         node_left.set_fences(split_fences.lower());
         node_right.set_fences(split_fences.upper());
+        node_left.head.head.adaption_state = self.head.head.adaption_state;
+        node_right.head.head.adaption_state = self.head.head.adaption_state;
         unsafe {
             if let Err(()) = parent.insert_child(index_in_parent, split_fences.separator(), node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);

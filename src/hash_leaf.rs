@@ -455,6 +455,7 @@ impl HashLeaf {
         //TODO optimize
         // if prefix length does not change, hashes can be copied
         let mut tmp = Self::new();
+        tmp.head.head.adaption_state = right.head.head.adaption_state;
         tmp.set_fences(MergeFences::new(self.fences(), separator, right.fences()).fences());
         let left = self.slots().iter().map(|s| (s, &*self));
         let right_iter = right.slots().iter().map(|s| (s, &*right));
@@ -645,6 +646,8 @@ unsafe impl Node for HashLeaf {
         node_left.set_fences(split_fences.lower());
         let mut node_right = Self::new();
         node_right.set_fences(split_fences.upper());
+        node_left.head.head.adaption_state = self.head.head.adaption_state;
+        node_right.head.head.adaption_state = self.head.head.adaption_state;
         unsafe {
             if let Err(()) = parent.insert_child(index_in_parent, split_fences.separator(), node_left_raw) {
                 BTreeNode::dealloc(node_left_raw);
