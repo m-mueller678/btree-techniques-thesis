@@ -3,6 +3,7 @@ use std::hint::black_box;
 use std::io::BufRead;
 use std::process::Command;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use bumpalo::Bump;
 use rand::{RngCore, SeedableRng};
 use rand::distributions::{WeightedIndex};
@@ -77,24 +78,10 @@ impl Perf {
     }
 }
 
-impl StatAggregator {
-    fn submit(&mut self, sample: u64) {
-        self.sum += sample;
-        self.count += 1;
-    }
-
-    fn time_fn<R>(&mut self, f: impl FnOnce() -> R) -> R {
-        let t1 = minstant::Instant::now();
-        let r = f();
-        let t2 = minstant::Instant::now();
-        self.submit(t2.duration_since(t1).as_nanos() as u64);
-        r
-    }
-}
-
 struct Bench {
     stats: [StatAggregator; Op::CARDINALITY],
-    sample_op: WeightedIndex<usize>,
+    sample_no_range: WeightedIndex<usize>,
+    sample_range: WeightedIndex<usize>,
     instruction_buffer: Vec<u8>,
     initial_size: usize,
     value_length: usize,
@@ -109,11 +96,75 @@ struct Bench {
     tree: BTree,
     #[cfg(debug_assertions)]
     std_set: BTreeSet<Vec<u8>>,
+    time_controller: TimeController,
+}
+
+struct TimeController {
+    time: u64,
+    op: usize,
+    history: Vec<HistoryEntry>,
+}
+
+
+struct HistoryEntry {
+    op_time: f64,
+    basic_conversions: usize,
+    basic_conversion_attempts: usize,
+    hash_conversions: usize,
+}
+
+pub static BASIC_CONVERSION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+pub static BASIC_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
+pub static HASH_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
+
+impl TimeController {
+    const EPOCH_LEN: usize = 2_000;
+    const EPOCH_PER_SWITCH: usize = 10_000;
+    const SWITCH_PERIOD_COUNT: usize = 3;
+    fn new() -> Self {
+        TimeController {
+            time: 0,
+            op: 0,
+            history: Vec::with_capacity(Self::EPOCH_PER_SWITCH * Self::SWITCH_PERIOD_COUNT),
+        }
+    }
+
+    fn time_fn<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        let t1 = minstant::Instant::now();
+        let r = f();
+        let t2 = minstant::Instant::now();
+        self.push_op(t2.duration_since(t1).as_nanos() as u64);
+        r
+    }
+
+    fn push_op(&mut self, time: u64) {
+        assert!(!self.is_end());
+        self.time += time;
+        self.op += 1;
+        if self.op == Self::EPOCH_LEN {
+            self.op = 0;
+            self.history.push(HistoryEntry {
+                op_time: self.time as f64 / self.op as f64,
+                basic_conversions: BASIC_CONVERSIONS.swap(0, Ordering::Relaxed),
+                basic_conversion_attempts: BASIC_CONVERSION_ATTEMPTS.swap(0, Ordering::Relaxed),
+                hash_conversions: HASH_CONVERSIONS.swap(0, Ordering::Relaxed),
+            });
+        }
+    }
+
+    fn is_end(&self) -> bool {
+        self.history.len() == Self::SWITCH_PERIOD_COUNT * Self::EPOCH_PER_SWITCH
+    }
+
+    fn is_range_period(&self, op_num: usize) -> bool {
+        (op_num / Self::EPOCH_LEN / Self::EPOCH_PER_SWITCH) % 2 == 1
+    }
 }
 
 impl Bench {
     fn init(
-        sample_op: WeightedIndex<usize>,
+        sample_range: WeightedIndex<usize>,
+        sample_no_range: WeightedIndex<usize>,
         initial_size: usize,
         value_length: usize,
         range_length: usize,
@@ -133,7 +184,8 @@ impl Bench {
         unsafe { btree_print_info(&mut tree) };
         Bench {
             stats: Default::default(),
-            sample_op,
+            sample_range,
+            sample_no_range,
             instruction_buffer: Vec::new(),
             initial_size,
             value_length,
@@ -154,6 +206,7 @@ impl Bench {
             perf: Perf::new(),
             rng,
             tree,
+            time_controller: TimeController::new(),
         }
     }
 
@@ -184,7 +237,7 @@ impl Bench {
                 Op::Hit => {
                     let mut out = 0;
                     let found = unsafe {
-                        self.stats[op as usize].time_fn(||
+                        self.time_controller.time_fn(||
                             black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
                         )
                     };
@@ -193,19 +246,19 @@ impl Bench {
                 Op::Miss => {
                     let mut out = 0;
                     let found = unsafe {
-                        self.stats[op as usize].time_fn(||
+                        self.time_controller.time_fn(||
                             black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
                         )
                     };
                     debug_assert!(found.is_null());
                 }
                 Op::Update => {
-                    self.stats[op as usize].time_fn(||
+                    self.time_controller.time_fn(||
                         black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
                     );
                 }
                 Op::Insert => {
-                    self.stats[op as usize].time_fn(||
+                    self.time_controller.time_fn(||
                         black_box(self.tree.insert(black_box(key), black_box(&self.payload)))
                     );
                     #[cfg(debug_assertions)]{
@@ -214,7 +267,7 @@ impl Bench {
                 }
                 Op::Remove => {
                     let found = unsafe {
-                        self.stats[op as usize].time_fn(||
+                        self.time_controller.time_fn(||
                             black_box(self.tree.remove(black_box(key)))
                         )
                     };
@@ -227,7 +280,7 @@ impl Bench {
                     #[cfg(debug_assertions)]
                         let expected: Vec<&Vec<u8>> = self.std_set.range(key.to_owned()..).take(self.range_length).collect();
                     let mut count = 0;
-                    self.stats[op as usize].time_fn(||
+                    self.time_controller.time_fn(||
                         black_box(
                             self.tree.range_lookup(&key, range_lookup_key_out.as_mut_ptr(), &mut |key_len, _value| {
                                 #[cfg(debug_assertions)]{
@@ -242,6 +295,9 @@ impl Bench {
                     }
                 }
             }
+            if self.time_controller.is_end() {
+                return;
+            }
         }
         for c in &mut self.perf.counters {
             c.1.disable().unwrap();
@@ -250,9 +306,13 @@ impl Bench {
         self.instruction_buffer.clear();
     }
 
-    fn run(mut self, op_count: usize) -> ([StatAggregator; Op::CARDINALITY], Perf) {
-        for _ in 0..op_count {
-            let op = self.sample_op.sample(&mut self.rng);
+    fn run(mut self) -> TimeController {
+        for op_num in 0.. {
+            let op = if self.time_controller.is_range_period(op_num) {
+                self.sample_range.sample(&mut self.rng)
+            } else {
+                self.sample_no_range.sample(&mut self.rng)
+            };
             let index = match Self::op_from_usize(op) {
                 Op::Hit | Op::Update | Op::Range => (self.inserted_start + self.inserted_count - 1 - self.zipf_sample(self.inserted_count)) % self.data.len(),
                 Op::Miss => (self.inserted_start + self.inserted_count + self.zipf_sample(self.data.len() - self.inserted_count)) % self.data.len(),
@@ -274,11 +334,13 @@ impl Bench {
             const INSTRUCTION_BUFFER_SIZE: usize = if cfg!(debug_assertions) { 1 } else { 100_000 };
             if self.instruction_buffer.len() >= INSTRUCTION_BUFFER_SIZE {
                 self.run_buffered();
+                if self.time_controller.is_end() {
+                    break;
+                }
             }
         }
-        self.run_buffered();
         unsafe { btree_print_info(&mut self.tree) };
-        (self.stats, self.perf)
+        self.time_controller
     }
 }
 
@@ -302,41 +364,34 @@ pub fn bench_main() {
     }
     let (keys, data_name) = data.expect("no bench");
 
-    let total_count = std::env::var("OP_COUNT").map(|x| x.parse().unwrap()).unwrap_or(1e6) as usize;
     let value_len: usize = std::env::var("VALUE_LEN").as_deref().unwrap_or("8").parse().unwrap();
     let range_len: usize = std::env::var("RANGE_LEN").as_deref().unwrap_or("10").parse().unwrap();
     let zipf_exponent: f64 = std::env::var("ZIPF_EXPONENT").as_deref().unwrap_or("0.15").parse().unwrap();
-    let op_rates: Vec<usize> = serde_json::from_str(std::env::var("OP_RATES").as_deref().unwrap_or("[40,40,5,5,5,5]")).unwrap();
-    assert!(op_rates.len() == 6);
-    let sample_op = WeightedIndex::new(op_rates.clone()).unwrap();
+    let sample_no_range = WeightedIndex::new([40, 40, 5, 5, 5, 5]).unwrap();
+    let sample_range = WeightedIndex::new([40, 40, 5, 5, 5, 1805]).unwrap();
 
     let initial_size = if std::env::var("START_EMPTY").as_deref().unwrap_or("0") == "1" { 0 } else { keys.len() / 2 };
 
-    let (stats, mut perf) = Bench::init(sample_op, initial_size, value_len, range_len, zipf_exponent, keys).run(total_count);
+    let time_controller = Bench::init(sample_range, sample_no_range, initial_size, value_len, range_len, zipf_exponent, keys).run();
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
-        "total_count":total_count,
         "value_len":value_len,
         "range_len":range_len,
         "zipf_exponent":zipf_exponent,
-        "op_rates":op_rates,
         "host": host_name(),
         "run_start":  std::time::SystemTime::now()
     });
-    for op in enum_iterator::all::<Op>() {
-        let stat = &stats[op as usize];
-        let op_count = stat.count;
-        let average_time = stat.sum as f64 / stat.count as f64;
-        let op_info = json!({
-            "op": format!("{op:?}"),
-            "op_count": op_count,
-            "time": average_time,
+    for (t, d) in time_controller.history.iter().enumerate() {
+        let hist_info = json!({
+            "t":t,
+            "op_time": d.op_time,
+            "basic_conversions": d.basic_conversions,
+            "basic_conversion_attempts": d.basic_conversion_attempts,
+            "hash_conversions": d.hash_conversions,
         });
-        print_joint_objects(&[&build_info, &common_info, &op_info]);
+        print_joint_objects(&[&build_info, &common_info, &hist_info]);
     }
-    let perf_info = perf.to_json();
-    print_joint_objects(&[&build_info, &common_info, &perf_info]);
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {

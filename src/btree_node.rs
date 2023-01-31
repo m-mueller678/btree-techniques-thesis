@@ -7,10 +7,12 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use std::sync::atomic::Ordering;
 use rand::{Rng, thread_rng};
 use rand::prelude::SliceRandom;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
+use crate::bench::{BASIC_CONVERSION_ATTEMPTS, BASIC_CONVERSIONS, HASH_CONVERSIONS};
 use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
 #[allow(unused_imports)]
@@ -109,18 +111,14 @@ impl BTreeNode {
         if rand_b < CONVERT_THESHOLD {
             match self.tag() {
                 BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
-                    HashLeaf::from_basic(self)
+                    HashLeaf::from_basic(self);
+                    HASH_CONVERSIONS.fetch_add(1, Ordering::Relaxed);
                 }
                 BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
                     use std::sync::atomic::*;
-                    let is_err = HashLeaf::to_basic(self).is_err();
-                    static TOTAL: AtomicUsize = AtomicUsize::new(0);
-                    static FAILED: AtomicUsize = AtomicUsize::new(0);
-                    let total = TOTAL.fetch_add(1, Ordering::Relaxed);
-                    let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
-                    if total % 1024 == 0 {
-                        eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
-                    }
+                    let is_ok = HashLeaf::to_basic(self).is_ok();
+                    BASIC_CONVERSION_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+                    BASIC_CONVERSIONS.fetch_add(is_ok as usize, Ordering::Relaxed);
                 }
                 _ => unreachable!()
             }
