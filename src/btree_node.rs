@@ -278,7 +278,7 @@ impl BTreeNode {
     /// merge into right,
     ///self is discarded after this
     pub unsafe fn try_merge_right(
-        &self,
+        &mut self,
         right: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
@@ -287,12 +287,22 @@ impl BTreeNode {
             debug_assert!(right.is_underfull());
         }
         match (self.tag(), right.tag()) {
-            (BTreeNodeTag::HashLeaf, BTreeNodeTag::HashLeaf) => self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator),
             (BTreeNodeTag::BasicLeaf, BTreeNodeTag::BasicLeaf) => self.basic.merge_right(false, &mut *right, separator),
             (lt, rt) => {
-                debug_assert!(lt.is_inner());
-                debug_assert!(rt.is_inner());
-                merge_to_right::<BasicNode>(self, right, separator)
+                if lt.is_leaf() {
+                    if lt == BTreeNodeTag::BasicLeaf {
+                        HashLeaf::from_basic(self);
+                    }
+                    if rt == BTreeNodeTag::BasicLeaf {
+                        HashLeaf::from_basic(right);
+                    }
+                    debug_assert!(self.tag() == BTreeNodeTag::HashLeaf);
+                    debug_assert!(right.tag() == BTreeNodeTag::HashLeaf);
+                    self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator)
+                } else {
+                    debug_assert!(rt.is_inner());
+                    merge_to_right::<BasicNode>(self, right, separator)
+                }
             }
         }
     }
