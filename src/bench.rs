@@ -108,9 +108,9 @@ struct TimeController {
 
 struct HistoryEntry {
     op_time: f64,
-    basic_conversions: usize,
-    basic_conversion_attempts: usize,
-    hash_conversions: usize,
+    basic_conversions: f64,
+    basic_conversion_attempts: f64,
+    hash_conversions: f64,
 }
 
 pub static BASIC_CONVERSION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -118,8 +118,8 @@ pub static BASIC_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
 pub static HASH_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
 
 impl TimeController {
-    const EPOCH_LEN: usize = 2_000;
-    const EPOCH_PER_SWITCH: usize = 10_000;
+    const EPOCH_LEN: usize = 2_500_000;
+    const EPOCH_PER_SWITCH: usize = 100;
     const SWITCH_PERIOD_COUNT: usize = 3;
     fn new() -> Self {
         TimeController {
@@ -144,9 +144,9 @@ impl TimeController {
         if self.op == Self::EPOCH_LEN {
             self.history.push(HistoryEntry {
                 op_time: self.time as f64 / self.op as f64,
-                basic_conversions: BASIC_CONVERSIONS.swap(0, Ordering::Relaxed),
-                basic_conversion_attempts: BASIC_CONVERSION_ATTEMPTS.swap(0, Ordering::Relaxed),
-                hash_conversions: HASH_CONVERSIONS.swap(0, Ordering::Relaxed),
+                basic_conversions: BASIC_CONVERSIONS.swap(0, Ordering::Relaxed) as f64 / self.op as f64,
+                basic_conversion_attempts: BASIC_CONVERSION_ATTEMPTS.swap(0, Ordering::Relaxed) as f64 / self.op as f64,
+                hash_conversions: HASH_CONVERSIONS.swap(0, Ordering::Relaxed) as f64 / self.op as f64,
             });
             self.op = 0;
             self.time = 0;

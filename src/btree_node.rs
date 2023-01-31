@@ -79,11 +79,11 @@ impl AdaptionState {
     }
 }
 
-const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.1;
-const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.1;
-const LEAVE_KEY_WEIGHT: f64 = 0.1;
+const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.02;
+const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.02;
+const LEAVE_KEY_WEIGHT: f64 = 1e-3;
 const LEAVE_CONVERT_WEIGHT: f64 = 0.1;
-const LEAVE_ADAPTION_RANGE: u8 = 0;
+const LEAVE_ADAPTION_RANGE: u8 = 3;
 const BIT_21: u64 = 1 << 21;
 
 impl BTreeNode {
