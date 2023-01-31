@@ -142,13 +142,14 @@ impl TimeController {
         self.time += time;
         self.op += 1;
         if self.op == Self::EPOCH_LEN {
-            self.op = 0;
             self.history.push(HistoryEntry {
                 op_time: self.time as f64 / self.op as f64,
                 basic_conversions: BASIC_CONVERSIONS.swap(0, Ordering::Relaxed),
                 basic_conversion_attempts: BASIC_CONVERSION_ATTEMPTS.swap(0, Ordering::Relaxed),
                 hash_conversions: HASH_CONVERSIONS.swap(0, Ordering::Relaxed),
             });
+            self.op = 0;
+            self.time = 0;
         }
     }
 
