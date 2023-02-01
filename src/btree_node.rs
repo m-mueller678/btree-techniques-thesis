@@ -94,7 +94,7 @@ impl BTreeNode {
         const CONVERT_THESHOLD: u64 = (LEAVE_CONVERT_WEIGHT * BIT_21 as f64) as u64;
         let rng = &mut thread_rng();
         if rand_a < KEY_THESHOLD {
-            let mut short_key_count = (0..8).filter_map(|_| unsafe {
+            let mut short_key_count = (0..12).filter_map(|_| unsafe {
                 match self.tag() {
                     BTreeNodeTag::BasicLeaf => {
                         self.basic.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
@@ -105,7 +105,7 @@ impl BTreeNode {
                     _ => unreachable!()
                 }
             }).count();
-            let is_short = short_key_count >= 7;
+            let is_short = short_key_count >= 12;
             self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
         }
         if rand_b < CONVERT_THESHOLD {
