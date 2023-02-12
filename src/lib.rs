@@ -96,6 +96,11 @@ pub unsafe extern "C" fn btree_print_info(b_tree: *mut BTree) {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
+    bench::print_tpcc_result(time, tx_count, warehouses)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn btree_scan_asc(b_tree: *mut BTree, key: *const u8, key_len: u64, key_buffer: *mut u8, continue_callback: extern "C" fn(*const u8) -> bool) {
     let b_tree = &mut *b_tree;
     b_tree.range_lookup(std::slice::from_raw_parts(key, key_len as usize), key_buffer, &mut |_key_len, payload| {
@@ -104,8 +109,11 @@ pub unsafe extern "C" fn btree_scan_asc(b_tree: *mut BTree, key: *const u8, key_
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn btree_scan_desc(_b_tree: *mut BTree, _key: *const u8, _key_len: u64, _key_buffer: *mut u8, _continue_callback: extern "C" fn(*const u8) -> bool) {
-    //TODO
+pub unsafe extern "C" fn btree_scan_desc(b_tree: *mut BTree, key: *const u8, key_len: u64, key_buffer: *mut u8, continue_callback: extern "C" fn(*const u8) -> bool) {
+    let b_tree = &mut *b_tree;
+    b_tree.range_lookup_desc(std::slice::from_raw_parts(key, key_len as usize), key_buffer, &mut |_key_len, payload| {
+        continue_callback(payload.as_ptr())
+    })
 }
 
 

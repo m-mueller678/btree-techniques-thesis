@@ -339,6 +339,17 @@ pub fn bench_main() {
     print_joint_objects(&[&build_info, &common_info, &perf_info]);
 }
 
+pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
+    let tpcc = json!({
+        "host": host_name(),
+        "run_start":  std::time::SystemTime::now(),
+        "warehouse_count":warehouses,
+        "tx_count": tx_count,
+        "time": time,
+    });
+    print_joint_objects(&[&build_info().into(), &tpcc]);
+}
+
 fn print_joint_objects(objects: &[&serde_json::Value]) {
     let joint: serde_json::Map<_, _> = objects.iter().flat_map(|o| o.as_object().unwrap().iter()).map(|(s, v)| (s.clone(), v.clone())).collect();
     println!("{}", serde_json::to_string(&joint).unwrap());

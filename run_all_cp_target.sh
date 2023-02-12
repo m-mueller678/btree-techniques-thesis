@@ -1,14 +1,13 @@
 set -e
 
-OUT="$HOME/dyn-prefix.out"
+OUT="$HOME/tpcc.out"
 touch $OUT
 
 cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {1..20}
+for i in {1..10}
 do
-OP_RATES='[1,0,0,0,0,0]' OP_COUNT=1e8 INT="2E7" find . -name 'btree-*' -exec {} >> $OUT \;
-OP_RATES='[1,0,0,0,0,0]' OP_COUNT=1e8 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;
+RUNFOR=300 find . -name 'btree-*' -exec {} 1 250 >> $OUT \;
 done

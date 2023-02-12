@@ -184,7 +184,6 @@ impl BTree {
     }
 
     pub fn range_lookup_desc(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
-        todo!("implement leave adaption");
         count_op();
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
@@ -204,6 +203,7 @@ impl BTree {
                     parent = Some(node_inner);
                     node = child;
                 } else {
+                    (&mut *node).leave_notify_range_op();
                     unsafe {
                         if let Some(p) = parent {
                             let fence_data = p.fences();

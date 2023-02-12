@@ -578,6 +578,7 @@ impl HashLeaf {
                 let hash_slot = reinterpret_mut::<BTreeNode, HashLeaf>(node).slots()[i];
                 let basic = reinterpret_mut::<BTreeNode, BasicNode>(node);
                 let basic_slot = BasicSlot {
+                    #[cfg(feature = "basic-heads_true")]
                     head: head(hash_slot.key(basic.as_bytes()).0).0,
                     offset: hash_slot.offset,
                     key_len: hash_slot.key_len,

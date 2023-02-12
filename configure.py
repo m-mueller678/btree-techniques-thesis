@@ -7,6 +7,7 @@ from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
 HOST = "cascade-01"
+TPCC = True
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
@@ -77,7 +78,7 @@ def all_feature_combinations():
     return out
 
 
-def build_all(cfg_set):
+def build_all(cfg_set, tpcc=TPCC):
     system("git status")
     input()
     time = str(datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
@@ -88,8 +89,12 @@ def build_all(cfg_set):
     for cfg in cfg_set:
         counter = counter + 1
         configure(cfg, revision)
-        assert system(f'cargo rustc --bin btree --release -- -C target-cpu=cascadelake') == 0
-        shutil.copyfile("target/release/btree", f'{build_dir}/btree-{revision}-{counter}')
+        if tpcc:
+            assert system(f'cd tpcc; make') == 0
+            shutil.copyfile("tpcc/tpcc.elf", f'{build_dir}/btree-{revision}-{counter}')
+        else:
+            assert system(f'cargo rustc --bin btree --release -- -C target-cpu=cascadelake') == 0
+            shutil.copyfile("target/release/btree", f'{build_dir}/btree-{revision}-{counter}')
     return build_dir
 
 
@@ -116,23 +121,23 @@ def set_feature(k, v):
 
 set_feature('basic-prefix', 'true')
 set_feature('basic-heads', 'true')
-cases = []
 set_feature('basic-use-hint', 'true')
-set_feature('dynamic-prefix', 'true')
+
+# set_feature('dynamic-prefix', 'true')
 # features['dynamic-prefix'] = "false"
-# set_feature("leaf", "hash")
+set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
 # set_feature("branch-cache", 'true')
 # features["branch-cache"] = "false"
+set_feature('inner', "explicit_length")
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
-# set_feature('inner', "explicit_length")
-# set_feature("leaf", "adapt")
+set_feature("leaf", "adapt")
 # for adapt in ["1000", "100", "10"]:
 #    set_feature("descend-adapt-inner", adapt)
 
-assert len(cases) == 2
+assert len(cases) == 7
 
 dir = build_all(cases)
 upload(dir)

@@ -402,9 +402,7 @@ int main(int argc, char **argv) {
     for (auto &t: threads)
         t.join();
 
-    std::cout << txProgress / (double) (runForSec) << std::endl;
-    std::cerr << "tx/sec: " << txProgress / (double) (runForSec) << std::endl;
-    std::cerr << "tx: " << txProgress << std::endl;
+    print_tpcc_result(runForSec, txProgress, warehouseCount);
 
     return 0;
 }
