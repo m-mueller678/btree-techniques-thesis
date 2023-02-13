@@ -205,6 +205,9 @@ impl BTree {
                 } else {
                     (&mut *node).leave_notify_range_op();
                     unsafe {
+                        if !node.to_leaf_mut().range_lookup_desc(&start_key_buffer[..start_key_len], key_out, callback) {
+                            return;
+                        }
                         if let Some(p) = parent {
                             let fence_data = p.fences();
                             let count = p.key_count();
