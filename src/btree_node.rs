@@ -114,12 +114,14 @@ impl BTreeNode {
                 BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
                     use std::sync::atomic::*;
                     let is_err = HashLeaf::to_basic(self).is_err();
-                    static TOTAL: AtomicUsize = AtomicUsize::new(0);
-                    static FAILED: AtomicUsize = AtomicUsize::new(0);
-                    let total = TOTAL.fetch_add(1, Ordering::Relaxed);
-                    let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
-                    if total % 1024 == 0 {
-                        eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
+                    if cfg!(debug_assertions) {
+                        static TOTAL: AtomicUsize = AtomicUsize::new(0);
+                        static FAILED: AtomicUsize = AtomicUsize::new(0);
+                        let total = TOTAL.fetch_add(1, Ordering::Relaxed);
+                        let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
+                        if total % 1024 == 0 {
+                            eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
+                        }
                     }
                 }
                 _ => unreachable!()
