@@ -7,6 +7,7 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use std::sync::atomic::Ordering;
 use rand::{Rng, thread_rng};
 use rand::prelude::SliceRandom;
 use crate::adaptive::{adapt_inner, infrequent};
@@ -77,11 +78,11 @@ impl AdaptionState {
     }
 }
 
-const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.1;
-const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.1;
-const LEAVE_KEY_WEIGHT: f64 = 0.1;
+const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.02;
+const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.02;
+const LEAVE_KEY_WEIGHT: f64 = 5e-3;
 const LEAVE_CONVERT_WEIGHT: f64 = 0.1;
-const LEAVE_ADAPTION_RANGE: u8 = 0;
+const LEAVE_ADAPTION_RANGE: u8 = 3;
 const BIT_21: u64 = 1 << 21;
 
 impl BTreeNode {
@@ -92,7 +93,7 @@ impl BTreeNode {
         const CONVERT_THESHOLD: u64 = (LEAVE_CONVERT_WEIGHT * BIT_21 as f64) as u64;
         let rng = &mut thread_rng();
         if rand_a < KEY_THESHOLD {
-            let mut short_key_count = (0..8).filter_map(|_| unsafe {
+            let mut short_key_count = (0..12).filter_map(|_| unsafe {
                 match self.tag() {
                     BTreeNodeTag::BasicLeaf => {
                         self.basic.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
@@ -103,13 +104,13 @@ impl BTreeNode {
                     _ => unreachable!()
                 }
             }).count();
-            let is_short = short_key_count >= 7;
-            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 0 } else { 128 };
+            let is_short = short_key_count >= 12;
+            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
         }
         if rand_b < CONVERT_THESHOLD {
             match self.tag() {
                 BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
-                    HashLeaf::from_basic(self)
+                    HashLeaf::from_basic(self);
                 }
                 BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
                     use std::sync::atomic::*;
@@ -282,7 +283,7 @@ impl BTreeNode {
     /// merge into right,
     ///self is discarded after this
     pub unsafe fn try_merge_right(
-        &self,
+        &mut self,
         right: &mut BTreeNode,
         separator: FatTruncatedKey,
     ) -> Result<(), ()> {
@@ -291,12 +292,22 @@ impl BTreeNode {
             debug_assert!(right.is_underfull());
         }
         match (self.tag(), right.tag()) {
-            (BTreeNodeTag::HashLeaf, BTreeNodeTag::HashLeaf) => self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator),
             (BTreeNodeTag::BasicLeaf, BTreeNodeTag::BasicLeaf) => self.basic.merge_right(false, &mut *right, separator),
             (lt, rt) => {
-                debug_assert!(lt.is_inner());
-                debug_assert!(rt.is_inner());
-                merge_to_right::<BasicNode>(self, right, separator)
+                if lt.is_leaf() {
+                    if lt == BTreeNodeTag::BasicLeaf {
+                        HashLeaf::from_basic(self);
+                    }
+                    if rt == BTreeNodeTag::BasicLeaf {
+                        HashLeaf::from_basic(right);
+                    }
+                    debug_assert!(self.tag() == BTreeNodeTag::HashLeaf);
+                    debug_assert!(right.tag() == BTreeNodeTag::HashLeaf);
+                    self.hash_leaf.try_merge_right(&mut (*right).hash_leaf, separator)
+                } else {
+                    debug_assert!(rt.is_inner());
+                    merge_to_right::<BasicNode>(self, right, separator)
+                }
             }
         }
     }
