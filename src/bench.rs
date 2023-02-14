@@ -3,6 +3,7 @@ use std::hint::black_box;
 use std::io::BufRead;
 use std::process::Command;
 use std::ptr;
+use std::sync::atomic::Ordering;
 use bumpalo::Bump;
 use rand::{RngCore, SeedableRng};
 use rand::distributions::{WeightedIndex};
@@ -278,10 +279,10 @@ impl Bench {
         }
         self.run_buffered();
         unsafe { btree_print_info(&mut self.tree) };
+        std::mem::forget(self.tree);
         (self.stats, self.perf)
     }
 }
-
 
 pub fn bench_main() {
     ensure_init();
@@ -351,6 +352,8 @@ pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {
+    // this is just a convenient place to set the flag, as all benchmarks call this at the end.
+    crate::MEASUREMENT_COMPLETE.store(true, Ordering::Relaxed);
     let joint: serde_json::Map<_, _> = objects.iter().flat_map(|o| o.as_object().unwrap().iter()).map(|(s, v)| (s.clone(), v.clone())).collect();
     println!("{}", serde_json::to_string(&joint).unwrap());
 }
