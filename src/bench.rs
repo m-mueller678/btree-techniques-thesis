@@ -341,10 +341,10 @@ impl Bench {
             }
         }
         unsafe { btree_print_info(&mut self.tree) };
+        std::mem::forget(self.tree);
         self.time_controller
     }
 }
-
 
 pub fn bench_main() {
     ensure_init();
@@ -396,6 +396,8 @@ pub fn bench_main() {
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {
+    // this is just a convenient place to set the flag, as all benchmarks call this at the end.
+    crate::MEASUREMENT_COMPLETE.store(true, Ordering::Relaxed);
     let joint: serde_json::Map<_, _> = objects.iter().flat_map(|o| o.as_object().unwrap().iter()).map(|(s, v)| (s.clone(), v.clone())).collect();
     println!("{}", serde_json::to_string(&joint).unwrap());
 }

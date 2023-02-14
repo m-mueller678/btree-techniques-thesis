@@ -12,6 +12,7 @@ use crate::vtables::init_vtables;
 use b_tree::BTree;
 use std::ops::Deref;
 use std::slice;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 use crate::node_stats::print_stats;
 
@@ -35,6 +36,8 @@ pub mod art_node;
 pub mod adaptive;
 pub mod branch_cache;
 pub mod bench;
+
+static MEASUREMENT_COMPLETE: AtomicBool = AtomicBool::new(false);
 
 pub fn ensure_init() {
     static INIT: Once = Once::new();
@@ -85,6 +88,8 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 
 #[no_mangle]
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
+    assert!(MEASUREMENT_COMPLETE.load(Ordering::Relaxed), "B-Tree destructor not implemented");
+    // incomplete, leaks memory
     drop(Box::<BTree>::from_raw(b_tree));
 }
 
