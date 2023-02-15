@@ -52,6 +52,7 @@ enum Op {
     Insert,
     Remove,
     Range,
+    Prefetch,
 }
 
 #[derive(Default)]
@@ -190,6 +191,12 @@ impl Bench {
             let len = u16::from_ne_bytes(*len_bytes) as usize;
             let key = &self.instruction_buffer[i + 3..][..len];
             i += len + 3;
+            unsafe {
+                let mut out = 0;
+                self.stats[Op::Prefetch as usize].time_fn(||
+                    black_box(self.tree.lookup(black_box(&mut out), black_box(key)))
+                );
+            }
             match op {
                 Op::Hit => {
                     let mut out = 0;
@@ -251,6 +258,7 @@ impl Bench {
                         assert!(count == expected.len());
                     }
                 }
+                Op::Prefetch => unreachable!(),
             }
         }
         for c in &mut self.perf.counters {
@@ -277,6 +285,7 @@ impl Bench {
                     self.inserted_start = (self.inserted_start + 1) % self.data.len();
                     index
                 }
+                Op::Prefetch => unreachable!(),
             };
             self.instruction_buffer.push(op as u8);
             self.instruction_buffer.extend_from_slice(&(self.data[index].len() as u16).to_ne_bytes());
