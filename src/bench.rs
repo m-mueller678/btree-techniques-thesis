@@ -29,6 +29,15 @@ fn build_info() -> serde_json::Map<String, serde_json::Value> {
         .filter(|x| !x.0.is_empty()).collect()
 }
 
+
+fn mem_info() -> serde_json::Value {
+    let statm = procfs::process::Process::myself().unwrap().statm().unwrap();
+    json!({
+        "memory": statm.size,
+        "statm":statm,
+    })
+}
+
 fn host_name() -> String {
     let out = Command::new("hostname").output().unwrap().stdout;
     String::from_utf8_lossy(&out).to_string()
@@ -314,6 +323,7 @@ pub fn bench_main() {
     let initial_size = if std::env::var("START_EMPTY").as_deref().unwrap_or("0") == "1" { 0 } else { keys.len() / 2 };
 
     let (stats, mut perf) = Bench::init(sample_op, initial_size, value_len, range_len, zipf_exponent, keys).run(total_count);
+    let mem_info = mem_info();
     let build_info = build_info().into();
     let common_info = json!({
         "data":data_name,
@@ -337,10 +347,11 @@ pub fn bench_main() {
         print_joint_objects(&[&build_info, &common_info, &op_info]);
     }
     let perf_info = perf.to_json();
-    print_joint_objects(&[&build_info, &common_info, &perf_info]);
+    print_joint_objects(&[&build_info, &common_info, &perf_info, &mem_info]);
 }
 
 pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
+    let mem_info = mem_info();
     let tpcc = json!({
         "host": host_name(),
         "run_start":  std::time::SystemTime::now(),
@@ -348,7 +359,7 @@ pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
         "tx_count": tx_count,
         "time": time,
     });
-    print_joint_objects(&[&build_info().into(), &tpcc]);
+    print_joint_objects(&[&build_info().into(), &tpcc, &mem_info]);
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {
