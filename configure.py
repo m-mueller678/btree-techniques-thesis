@@ -7,7 +7,7 @@ from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
 HOST = "cascade-01"
-TPCC = True
+TPCC = False
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
@@ -120,24 +120,25 @@ def set_feature(k, v):
 
 
 set_feature('basic-prefix', 'true')
+cases=[]
 set_feature('basic-heads', 'true')
 set_feature('basic-use-hint', 'true')
 
 # set_feature('dynamic-prefix', 'true')
 # features['dynamic-prefix'] = "false"
-set_feature("leaf", "hash")
+#set_feature("leaf", "hash")
 # set_feature("strip-prefix", "true")
 # features["strip-prefix"] = "false"
 # set_feature("branch-cache", 'true')
 # features["branch-cache"] = "false"
-set_feature('inner', "explicit_length")
+#set_feature('inner', "explicit_length")
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
-set_feature("leaf", "adapt")
+#set_feature("leaf", "adapt")
 # for adapt in ["1000", "100", "10"]:
 #    set_feature("descend-adapt-inner", adapt)
 
-assert len(cases) == 7
+assert len(cases) == 2
 
 dir = build_all(cases)
 upload(dir)
