@@ -13,8 +13,9 @@ use b_tree::BTree;
 use std::ops::Deref;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Once;
-use crate::node_stats::print_stats;
+use std::sync::{Mutex, Once};
+use once_cell::sync::Lazy;
+use crate::node_stats::{print_stats, print_tag_counts};
 
 
 pub mod b_tree;
@@ -46,10 +47,14 @@ pub fn ensure_init() {
     });
 }
 
+static ALL_TREES: Lazy<Mutex<Vec<usize>>> = Lazy::new(Default::default);
+
 #[no_mangle]
 pub extern "C" fn btree_new() -> *mut BTree {
     ensure_init();
-    Box::leak(Box::new(BTree::new()))
+    let ptr = Box::leak(Box::new(BTree::new()));
+    ALL_TREES.lock().unwrap().push(ptr as *mut _ as usize);
+    ptr
 }
 
 #[no_mangle]
@@ -89,8 +94,7 @@ pub unsafe extern "C" fn btree_remove(b_tree: *mut BTree, key: *const u8, key_le
 #[no_mangle]
 pub unsafe extern "C" fn btree_destroy(b_tree: *mut BTree) {
     assert!(MEASUREMENT_COMPLETE.load(Ordering::Relaxed), "B-Tree destructor not implemented");
-    // incomplete, leaks memory
-    drop(Box::<BTree>::from_raw(b_tree));
+    // leak tree
 }
 
 #[no_mangle]
@@ -102,7 +106,17 @@ pub unsafe extern "C" fn btree_print_info(b_tree: *mut BTree) {
 
 #[no_mangle]
 pub unsafe extern "C" fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
-    bench::print_tpcc_result(time, tx_count, warehouses)
+    bench::print_tpcc_result(time, tx_count, warehouses);
+    for t in ALL_TREES.lock().unwrap().iter().copied() {
+        let t: usize = t;
+        print_tag_counts(&*(t as *mut BTree))
+    }
+}
+
+
+#[no_mangle]
+pub unsafe extern "C" fn tpcc_begin() {
+    btree_node::tpcc_begin();
 }
 
 #[no_mangle]

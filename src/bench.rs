@@ -16,6 +16,7 @@ use perf_event::{Counter, Group};
 use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Software, WhichCache};
 use serde_json::json;
 use crate::{BTree, btree_print_info, ensure_init, PAGE_SIZE};
+use crate::btree_node::leave_adapt_details;
 
 fn build_info() -> serde_json::Map<String, serde_json::Value> {
     let header = include_str!("../build-info.h");
@@ -359,7 +360,7 @@ pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
         "tx_count": tx_count,
         "time": time,
     });
-    print_joint_objects(&[&build_info().into(), &tpcc, &mem_info]);
+    print_joint_objects(&[&build_info().into(), &tpcc, &mem_info, &leave_adapt_details()]);
 }
 
 fn print_joint_objects(objects: &[&serde_json::Value]) {

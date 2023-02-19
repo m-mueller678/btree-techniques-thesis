@@ -7,9 +7,10 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use rand::{Rng, thread_rng};
 use rand::prelude::SliceRandom;
+use serde_json::json;
 use crate::adaptive::{adapt_inner, infrequent};
 use crate::art_node::ArtNode;
 use crate::branch_cache::BranchCacheAccessor;
@@ -85,6 +86,27 @@ const LEAVE_CONVERT_WEIGHT: f64 = 0.1;
 const LEAVE_ADAPTION_RANGE: u8 = 3;
 const BIT_21: u64 = 1 << 21;
 
+static TOTAL: AtomicUsize = AtomicUsize::new(0);
+static FAILED: AtomicUsize = AtomicUsize::new(0);
+static TO_HASH: AtomicUsize = AtomicUsize::new(0);
+static CONVERSION_TIME: AtomicUsize = AtomicUsize::new(0);
+
+pub fn tpcc_begin() {
+    TOTAL.store(0, Ordering::Relaxed);
+    FAILED.store(0, Ordering::Relaxed);
+    TO_HASH.store(0, Ordering::Relaxed);
+    CONVERSION_TIME.store(0, Ordering::Relaxed);
+}
+
+pub fn leave_adapt_details() -> serde_json::Value {
+    json!({
+        "leave_convert_to_hash":TO_HASH,
+        "leave_convert_to_basic_attempt":TOTAL,
+        "leave_convert_to_basic_fail":FAILED,
+        "leave_convert_time":CONVERSION_TIME,
+    })
+}
+
 impl BTreeNode {
     fn leave_convert_common(&mut self, residual_random: u64) {
         let rand_a = residual_random & (BIT_21 - 1);
@@ -108,22 +130,22 @@ impl BTreeNode {
             self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
         }
         if rand_b < CONVERT_THESHOLD {
+            use std::sync::atomic::*;
             match self.tag() {
                 BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
+                    TO_HASH.fetch_add(1, Ordering::Relaxed);
+                    let t1 = minstant::Instant::now();
                     HashLeaf::from_basic(self);
+                    let t2 = minstant::Instant::now();
+                    CONVERSION_TIME.fetch_add((t2 - t1).as_nanos() as usize, Ordering::Relaxed);
                 }
                 BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
-                    use std::sync::atomic::*;
+                    let t1 = minstant::Instant::now();
                     let is_err = HashLeaf::to_basic(self).is_err();
-                    if cfg!(debug_assertions) {
-                        static TOTAL: AtomicUsize = AtomicUsize::new(0);
-                        static FAILED: AtomicUsize = AtomicUsize::new(0);
-                        let total = TOTAL.fetch_add(1, Ordering::Relaxed);
-                        let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
-                        if total % 1024 == 0 {
-                            eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
-                        }
-                    }
+                    let t2 = minstant::Instant::now();
+                    CONVERSION_TIME.fetch_add((t2 - t1).as_nanos() as usize, Ordering::Relaxed);
+                    TOTAL.fetch_add(1, Ordering::Relaxed);
+                    FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
                 }
                 _ => unreachable!()
             }

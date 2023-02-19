@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/hints-rerun.out"
+#OUT="$HOME/hints-rerun.out"
 touch $OUT
 
 cd ~/cp-target

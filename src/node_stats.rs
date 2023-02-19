@@ -49,6 +49,23 @@ pub fn btree_to_inner_node_stats(b_tree: &BTree) -> Vec<InnerNodeData> {
     ret
 }
 
+pub fn print_tag_counts(b_tree: &BTree) {
+    let mut counter = Counter::new();
+    fn visit(node: &BTreeNode, depth: usize, out: &mut Counter<BTreeNodeTag>) {
+        out.update(std::iter::once(node.tag()));
+        if node.tag().is_leaf() {
+            return;
+        }
+        let node = node.to_inner();
+        for i in 0..node.key_count() + 1 {
+            visit(unsafe { &*node.get_child(i) }, depth + 1, out)
+        }
+    }
+    visit(unsafe { &*b_tree.root }, 0, &mut counter);
+    eprintln!("tag counts: {:?}", counter.most_common());
+}
+
+
 pub fn print_stats(b_tree: &BTree) {
     let nodes = btree_to_inner_node_stats(b_tree);
     let tag_counts: counter::Counter<_> = nodes.iter().map(|n| n.tag).collect();

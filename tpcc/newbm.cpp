@@ -375,7 +375,9 @@ int main(int argc, char **argv) {
     */
 
     std::cerr << "setup complete" << std::endl;
+
     vector<thread> threads;
+    tpcc_begin();
 
     for (unsigned worker = 0; worker < nthreads; worker++) {
         threads.emplace_back([&, worker]() {
