@@ -1,15 +1,18 @@
 use crate::{BTreeNode, op_count, PAGE_SIZE};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use counter::Counter;
 use crate::branch_cache::BranchCacheAccessor;
 use crate::util::trailing_bytes;
 use op_count::count_op;
+use crate::bench::Op;
 use crate::hash_leaf::HashLeaf;
 
 
 pub struct BTree {
     pub root: *mut BTreeNode,
     branch_cache: BranchCacheAccessor,
+    pub operations: Counter<Op>
 }
 
 impl BTree {
@@ -18,11 +21,13 @@ impl BTree {
         BTree {
             root: BTreeNode::new_leaf(),
             branch_cache: BranchCacheAccessor::new(),
+            operations: Counter::new(),
         }
     }
 
     #[tracing::instrument(skip(self))]
     pub fn insert(&mut self, key: &[u8], payload: &[u8]) {
+        self.operations.update(std::iter::once(Op::Insert));
         count_op();
         assert!((key.len() + payload.len()) as usize <= PAGE_SIZE / 4);
         unsafe {
@@ -39,6 +44,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     pub unsafe fn lookup(&mut self, payload_len_out: *mut u64, key: &[u8]) -> *mut u8 {
+        self.operations.update(std::iter::once(Op::Hit));
         count_op();
         tracing::info!("lookup {key:?}");
         let (node, _, _) = (*self.root).descend(key, |_| false, &mut self.branch_cache);
@@ -98,6 +104,7 @@ impl BTree {
 
     #[tracing::instrument(skip(self))]
     pub unsafe fn remove(&mut self, key: &[u8]) -> bool {
+        self.operations.update(std::iter::once(Op::Remove));
         count_op();
         let mut merge_target: *mut BTreeNode = ptr::null_mut();
         loop {
@@ -134,6 +141,7 @@ impl BTree {
     }
 
     pub fn range_lookup(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        self.operations.update(std::iter::once(Op::Range));
         count_op();
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];
@@ -184,6 +192,7 @@ impl BTree {
     }
 
     pub fn range_lookup_desc(&mut self, initial_start: &[u8], key_out: *mut u8, callback: &mut dyn FnMut(usize, &[u8]) -> bool) {
+        self.operations.update(std::iter::once(Op::Range));
         count_op();
         let mut get_key_buffer = [0u8; PAGE_SIZE / 4];
         let mut start_key_buffer = [0u8; PAGE_SIZE / 4];

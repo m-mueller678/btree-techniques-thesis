@@ -45,8 +45,8 @@ fn host_name() -> String {
 }
 
 #[repr(usize)]
-#[derive(Clone, Copy, Sequence, Debug)]
-enum Op {
+#[derive(Clone, Copy, Sequence, Debug, Eq, PartialEq, Hash)]
+pub enum Op {
     Hit,
     Miss,
     Update,

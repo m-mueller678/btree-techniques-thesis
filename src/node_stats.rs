@@ -63,6 +63,7 @@ pub fn print_tag_counts(b_tree: &BTree) {
     }
     visit(unsafe { &*b_tree.root }, 0, &mut counter);
     eprintln!("tag counts: {:?}", counter.most_common());
+    eprintln!("op counts: {:?}", b_tree.operations.most_common());
 }
 
 
