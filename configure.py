@@ -132,10 +132,12 @@ cases = []
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
 set_feature("leaf", "basic")
+set_feature("leaf", "hash")
+set_feature("leaf", "adapt")
 # for adapt in ["1000", "100", "10"]:
 #    set_feature("descend-adapt-inner", adapt)
 
-assert len(cases) == 1
+assert len(cases) == 3
 
 dir = build_all(cases)
 upload(dir)
