@@ -7,10 +7,13 @@ use std::intrinsics::transmute;
 use std::mem::{ManuallyDrop};
 use std::{mem, ptr};
 use std::ops::Range;
+use std::simd::Simd;
 use std::sync::atomic::Ordering;
-use rand::{Rng, thread_rng};
+use rand::{Rng};
+use rand::distributions::Uniform;
+use rand::distributions::uniform::{UniformInt, UniformSampler};
 use rand::prelude::SliceRandom;
-use crate::adaptive::{adapt_inner, infrequent};
+use crate::adaptive::{adapt_inner, infrequent, RAND};
 use crate::art_node::ArtNode;
 use crate::branch_cache::BranchCacheAccessor;
 use crate::vtables::BTreeNodeTag;
@@ -78,83 +81,88 @@ impl AdaptionState {
     }
 }
 
-const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.02;
-const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.02;
-const LEAVE_KEY_WEIGHT: f64 = 5e-3;
-const LEAVE_CONVERT_WEIGHT: f64 = 0.1;
+const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.025;
+const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.075;
+const LEAVE_KEY_WEIGHT: f64 = 0.01;
 const LEAVE_ADAPTION_RANGE: u8 = 3;
-const BIT_21: u64 = 1 << 21;
+const BITS_PER_RAND: u32 = 32;
+const RAND_BIT: u64 = 1 << BITS_PER_RAND;
 
 impl BTreeNode {
     fn leave_convert_common(&mut self, residual_random: u64) {
-        let rand_a = residual_random & (BIT_21 - 1);
-        let rand_b = (residual_random >> 21) & (BIT_21 - 1);
-        const KEY_THESHOLD: u64 = (LEAVE_KEY_WEIGHT * BIT_21 as f64) as u64;
-        const CONVERT_THESHOLD: u64 = (LEAVE_CONVERT_WEIGHT * BIT_21 as f64) as u64;
-        let rng = &mut thread_rng();
-        if rand_a < KEY_THESHOLD {
-            let mut short_key_count = (0..12).filter_map(|_| unsafe {
-                match self.tag() {
+        let rand_a = residual_random & (RAND_BIT - 1);
+        const KEY_THESHOLD: u64 = (LEAVE_KEY_WEIGHT * RAND_BIT as f64) as u64;
+        'key_scan: {
+            if rand_a < KEY_THESHOLD {
+                type u16x8 = packed_simd_2::u16x8;
+                let is_short = match self.tag() {
                     BTreeNodeTag::BasicLeaf => {
-                        self.basic.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
+                        let slots = unsafe { self.basic.slots() };
+                        if slots.len() == 0 {
+                            break 'key_scan;
+                        }
+                        let indices: u16x8 = UniformInt::<u16x8>::sample_single(u16x8::splat(0), u16x8::splat(slots.len() as u16), unsafe { &mut *RAND });
+                        (0..u16x8::lanes()).all(|i| slots[indices.extract(i) as usize].key_len <= 4)
                     }
                     BTreeNodeTag::HashLeaf => {
-                        self.hash_leaf.slots().choose(rng).filter(|s| s.key_len <= 4).map(|_| ())
+                        let slots = unsafe { self.hash_leaf.slots() };
+                        if slots.len() == 0 {
+                            break 'key_scan;
+                        }
+                        let indices: u16x8 = UniformInt::<u16x8>::sample_single(u16x8::splat(0), u16x8::splat(slots.len() as u16), unsafe { &mut *RAND });
+                        (0..u16x8::lanes()).all(|i| slots[indices.extract(i) as usize].key_len <= 4)
                     }
                     _ => unreachable!()
-                }
-            }).count();
-            let is_short = short_key_count >= 12;
-            self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
+                };
+                self.head_mut().adaption_state.0 = self.head_mut().adaption_state.0 % 128 + if is_short { 128 } else { 0 };
+            }
         }
-        if rand_b < CONVERT_THESHOLD {
-            match self.tag() {
-                BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
-                    HashLeaf::from_basic(self);
-                }
-                BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
-                    use std::sync::atomic::*;
-                    let is_err = HashLeaf::to_basic(self).is_err();
-                    if cfg!(debug_assertions) {
-                        static TOTAL: AtomicUsize = AtomicUsize::new(0);
-                        static FAILED: AtomicUsize = AtomicUsize::new(0);
-                        let total = TOTAL.fetch_add(1, Ordering::Relaxed);
-                        let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
-                        if total % 1024 == 0 {
-                            eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
-                        }
+        match self.tag() {
+            BTreeNodeTag::BasicLeaf => if self.head_mut().adaption_state.0 == 0 {
+                HashLeaf::from_basic(self);
+            }
+            BTreeNodeTag::HashLeaf => if self.head_mut().adaption_state.0 >= LEAVE_ADAPTION_RANGE {
+                use std::sync::atomic::*;
+                let is_err = HashLeaf::to_basic(self).is_err();
+                if cfg!(debug_assertions) {
+                    static TOTAL: AtomicUsize = AtomicUsize::new(0);
+                    static FAILED: AtomicUsize = AtomicUsize::new(0);
+                    let total = TOTAL.fetch_add(1, Ordering::Relaxed);
+                    let failed = FAILED.fetch_add(is_err as usize, Ordering::Relaxed);
+                    if total % 1024 == 0 {
+                        eprintln!("leave to basic convert fail rate: {}", failed as f64 / total as f64);
                     }
                 }
-                _ => unreachable!()
             }
+            _ => unreachable!()
         }
     }
 
     pub fn leave_notify_point_op(&mut self) {
         #[cfg(feature = "leaf_adapt")]{
-            const THRESHOLD: u64 = (LEAVE_NOTIFY_POINT_WEIGHT * BIT_21 as f64) as u64;
-            let rand = thread_rng().gen::<u64>();
-            if rand & (BIT_21 - 1) < THRESHOLD {
+            const THRESHOLD: u64 = (LEAVE_NOTIFY_POINT_WEIGHT * RAND_BIT as f64) as u64;
+            let rand = unsafe { &mut *RAND }.gen::<u64>();
+            if rand & (RAND_BIT - 1) < THRESHOLD {
                 let head = self.head_mut();
                 if head.adaption_state.0 % 128 > 0 {
                     head.adaption_state.0 -= 1;
                 }
-                self.leave_convert_common(rand >> 21)
             }
+            self.leave_convert_common(rand >> BITS_PER_RAND)
         }
     }
 
     pub fn leave_notify_range_op(&mut self) {
         #[cfg(feature = "leaf_adapt")]{
-            const THRESHOLD: u64 = (LEAVE_NOTIFY_RANGE_WEIGHT * BIT_21 as f64) as u64;
-            let rand = thread_rng().gen::<u64>();
-            if rand & (BIT_21 - 1) < THRESHOLD {
+            const THRESHOLD: u64 = (LEAVE_NOTIFY_RANGE_WEIGHT * RAND_BIT as f64) as u64;
+            let rand = unsafe { &mut *RAND }.gen::<u64>();
+            if rand & (RAND_BIT - 1) < THRESHOLD {
                 let head = self.head_mut();
                 if head.adaption_state.0 % 128 < LEAVE_ADAPTION_RANGE {
                     head.adaption_state.0 += 1;
                 }
-                self.leave_convert_common(rand >> 21)
             }
+            self.leave_convert_common(rand >> BITS_PER_RAND)
         }
     }
 
