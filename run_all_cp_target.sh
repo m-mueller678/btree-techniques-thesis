@@ -1,14 +1,13 @@
 set -e
 
-OUT="$HOME/leave-adapt-op-times.out"
+OUT="$HOME/leave-adapt-ranges.out"
 touch $OUT
 
 cd ~/cp-target
 
 find . -name 'btree-*' -exec chmod u+x {}  \;
 
-for i in {1..3}
+for i in {1..5}
 do
-OP_COUNT=3e8 INT=2E7 find . -name 'btree-*' -exec {} >> $OUT \;
-OP_COUNT=3e8 FILE="$HOME/data/urls" find . -name 'btree-*' -exec {} >> $OUT \;q
+RUNFOR=900 find . -name 'btree-*' -exec {} 1 250 >> $OUT 2>&1 \;
 done
