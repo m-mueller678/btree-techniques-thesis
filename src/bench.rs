@@ -127,8 +127,8 @@ pub static BASIC_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
 pub static HASH_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
 
 impl TimeController {
-    const EPOCH_LEN: usize = 2_500_000;
-    const EPOCH_PER_SWITCH: usize = 100;
+    const EPOCH_LEN: usize = 125_000;
+    const EPOCH_PER_SWITCH: usize = 2_000;
     const SWITCH_PERIOD_COUNT: usize = 5;
     fn new() -> Self {
         TimeController {
@@ -403,8 +403,7 @@ pub fn bench_main() {
         });
         print_joint_objects(&[&build_info, &common_info, &hist_info]);
     }
-    let perf_info = perf.to_json();
-    print_joint_objects(&[&build_info, &common_info, &perf_info, &mem_info]);
+    print_joint_objects(&[&build_info, &common_info, &mem_info]);
 }
 
 pub fn print_tpcc_result(time: f64, tx_count: u64, warehouses: u64) {
