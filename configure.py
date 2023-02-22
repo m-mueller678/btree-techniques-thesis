@@ -7,7 +7,7 @@ from os import mkdir, system
 
 CMAKE_PATH = "~/intelliJ/clion-2022.2.1/bin/cmake/linux/bin/cmake"
 HOST = "cascade-01"
-TPCC = False
+TPCC = True
 
 FEATURES = {
     # "head-early-abort-create": ["true", "false"],
@@ -26,6 +26,7 @@ FEATURES = {
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
     "hash-variant": ["head", "alloc"],
+    "leave-adapt-range": ["3", "7", "15", "31"],
 
     "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
@@ -131,13 +132,14 @@ set_feature('inner', "explicit_length")
 cases = []
 # for inner in ["padded", "explicit_length", "ascii", "art"]:
 #    set_feature('inner', inner)
-set_feature("leaf", "basic")
-set_feature("leaf", "hash")
 set_feature("leaf", "adapt")
+set_feature("leave-adapt-range", "7")
+set_feature("leave-adapt-range", "15")
+set_feature("leave-adapt-range", "31")
 # for adapt in ["1000", "100", "10"]:
 #    set_feature("descend-adapt-inner", adapt)
 
-assert len(cases) == 3
+assert len(cases) == 4
 
 dir = build_all(cases)
 upload(dir)

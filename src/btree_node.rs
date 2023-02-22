@@ -82,10 +82,17 @@ impl AdaptionState {
     }
 }
 
-const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.025;
-const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.075;
+const LEAVE_NOTIFY_POINT_WEIGHT: f64 = 0.0083333333333333333333333333333 * LEAVE_ADAPTION_RANGE as f64;
+const LEAVE_NOTIFY_RANGE_WEIGHT: f64 = 0.025 * LEAVE_ADAPTION_RANGE as f64;
 const LEAVE_KEY_WEIGHT: f64 = 0.01;
+#[cfg(feature = "leave-adapt-range_3")]
 const LEAVE_ADAPTION_RANGE: u8 = 3;
+#[cfg(feature = "leave-adapt-range_7")]
+const LEAVE_ADAPTION_RANGE: u8 = 7;
+#[cfg(feature = "leave-adapt-range_15")]
+const LEAVE_ADAPTION_RANGE: u8 = 15;
+#[cfg(feature = "leave-adapt-range_31")]
+const LEAVE_ADAPTION_RANGE: u8 = 31;
 const BITS_PER_RAND: u32 = 32;
 const RAND_BIT: u64 = 1 << BITS_PER_RAND;
 
