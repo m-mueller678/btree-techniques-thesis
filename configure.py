@@ -26,6 +26,7 @@ FEATURES = {
     "branch-cache": ["false", "true"],
     "dynamic-prefix": ["false", "true"],
     "hash-variant": ["head", "alloc"],
+    "leave-adapt-range": ["3", "7", "15", "31"],
 
     "basic-use-hint": ["false", "true", "naive"],
     "basic-prefix": ["false", "true"],
