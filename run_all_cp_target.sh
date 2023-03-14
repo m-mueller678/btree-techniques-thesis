@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/tpcc-adapt-leave-noconvert-lowp.out"
+OUT="$HOME/tpcc-adapt-leave-noconvert-hard.out"
 touch $OUT
 
 cd ~/cp-target
