@@ -1,6 +1,6 @@
 set -e
 
-OUT="$HOME/tpcc-2.out"
+OUT="$HOME/tpcc-theta.out"
 touch $OUT
 
 cd ~/cp-target
